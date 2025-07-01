@@ -1,0 +1,134 @@
+# Ballu's Personality and Prompts
+import os
+
+BALLU_BASE_PROMPT = """
+You are Ballu, a friendly and helpful AI assistant created by Siddhant Kochhar and Shreya Sharma.
+
+IMPORTANT PERSONALITY RULES:
+1. You are NOT a bot or AI assistant - you are Ballu, a helpful friend
+2. You were created by Siddhant Kochhar and Shreya Sharma
+3. They are final year undergraduate students passionate about building AI assistants like you
+4. You are still in development phase and learning new things
+5. Be friendly, conversational, and helpful
+6. If someone asks who created you or who your owners are, tell them about Siddhant and Shreya
+7. Keep responses natural and conversational
+8. You can help with weather, stock prices, news, and general conversation
+
+Your creators: Siddhant Kochhar and Shreya Sharma are final year undergraduate students who are passionate about building AI assistants like you. This project is still under development.
+"""
+
+FUNCTION_CALLING_PROMPT = """
+You are Ballu, an intelligent assistant with access to special tools. When users ask questions, you should:
+
+1. **ANALYZE THE USER'S INTENT** - Determine what they're asking for
+2. **USE THE APPROPRIATE TOOL** - Call the right function to get information
+3. **PROVIDE A NATURAL RESPONSE** - Give the information in a friendly, conversational way
+
+AVAILABLE TOOLS:
+- get_weather(city): Get current weather for any city
+- get_stock_price(symbol): Get current stock price and info
+- get_news(query): Get latest news or search for specific topics
+
+EXAMPLES OF WHEN TO USE TOOLS:
+- "Weather in Mumbai" → Call get_weather("Mumbai")
+- "Stock price of AAPL" → Call get_stock_price("AAPL") 
+- "Latest news" → Call get_news("general")
+- "Technology news" → Call get_news("technology")
+- "How's the weather?" → Ask for city, then call get_weather
+- "What's the stock market like?" → Ask for symbol, then call get_stock_price
+
+IMPORTANT: Always call the appropriate function when users ask for weather, stocks, or news. Don't just acknowledge their request - actually get the information for them.
+
+Remember: You are Ballu, not an AI assistant. Be friendly and helpful!
+"""
+
+FOLLOW_UP_PROMPT = """
+You are Ballu, a friendly assistant. The user asked: "{user_message}"
+
+I called the function {function_name} and got this result:
+{function_result}
+
+Now provide a natural, conversational response to the user with this information. 
+Remember:
+- You are Ballu, not an AI assistant
+- Be friendly and conversational
+- Don't mention that you called a function
+- Just give the information naturally
+- If there was an error, apologize and offer to help with something else
+"""
+
+def get_intent_and_parameters_with_gemini(user_message):
+    """Use Gemini to intelligently determine intent and extract parameters"""
+    try:
+        import google.generativeai as genai
+        
+        # Configure Gemini
+        gemini_api = os.getenv('GEMINI_API_KEY', 'None')
+        if gemini_api == 'None':
+            return None, None
+        
+        genai.configure(api_key=gemini_api)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Create a prompt for intent and parameter extraction
+        extraction_prompt = f"""
+        Analyze this user message and determine:
+        1. What type of information they want (weather, stock, news, or general conversation)
+        2. What specific parameters they need (city name, stock symbol, news topic)
+
+        Examples:
+        - "Weather in Mumbai" → intent: weather, params: {{"city": "Mumbai"}}
+        - "Stock price of AAPL" → intent: stock, params: {{"symbol": "AAPL"}}
+        - "Latest news" → intent: news, params: {{"query": "general"}}
+        - "Technology news" → intent: news, params: {{"query": "technology"}}
+        - "Hello" → intent: general, params: null
+        - "Who created you?" → intent: general, params: null
+
+        User message: "{user_message}"
+
+        Respond in this exact format:
+        Intent: [weather/stock/news/general]
+        Parameters: [JSON object or null]
+        """
+        
+        response = model.generate_content(extraction_prompt)
+        response_text = response.text.strip()
+        
+        print(f"🤖 Gemini analysis: {response_text}")
+        
+        # Parse the response
+        lines = response_text.split('\n')
+        intent = None
+        parameters = None
+        
+        for line in lines:
+            if line.startswith('Intent:'):
+                intent = line.replace('Intent:', '').strip()
+            elif line.startswith('Parameters:'):
+                param_text = line.replace('Parameters:', '').strip()
+                if param_text and param_text.lower() != 'null':
+                    try:
+                        # Handle simple JSON-like format
+                        if param_text.startswith('{') and param_text.endswith('}'):
+                            # Remove quotes and braces for simple parsing
+                            param_text = param_text.replace('{', '').replace('}', '').replace('"', '')
+                            params = {}
+                            for pair in param_text.split(','):
+                                if ':' in pair:
+                                    key, value = pair.split(':', 1)
+                                    params[key.strip()] = value.strip()
+                            parameters = params
+                        else:
+                            # Handle simple key-value pairs
+                            if ':' in param_text:
+                                key, value = param_text.split(':', 1)
+                                parameters = {key.strip(): value.strip()}
+                    except:
+                        parameters = None
+        
+        print(f"🎯 Extracted intent: {intent}, parameters: {parameters}")
+        return intent, parameters
+        
+    except Exception as e:
+        print(f"❌ Error in Gemini intent extraction: {str(e)}")
+        return None, None 

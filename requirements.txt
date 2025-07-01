@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+python-telegram-bot
+requests
+python-dotenv
+google-generativeai
+yfinance
+pymongo

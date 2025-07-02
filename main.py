@@ -213,8 +213,6 @@ def send_welcome_message(chat_id, user_name):
         welcome_text = f"""
 🎉 Welcome {user_name}! I'm Ballu, your friendly AI assistant! 🤖
 
-I was created by Siddhant Kochhar and Shreya Sharma, two passionate final year undergraduate students who love building AI assistants like me.
-
 🌟 **What I can help you with:**
 
 🌤️ **Weather Updates** - Ask me about weather in any city!
@@ -235,15 +233,15 @@ I was created by Siddhant Kochhar and Shreya Sharma, two passionate final year u
 I'm still learning and growing, so feel free to ask me anything! What would you like to know about today? 😊
         """
         
-        # Send welcome text
-        send_telegram_message(chat_id, welcome_text)
-        
-        # Try to send welcome image if it exists
+        # Send welcome image first
         try:
             send_welcome_image(chat_id)
         except Exception as e:
             print(f"⚠️ Could not send welcome image: {str(e)}")
-            
+        
+        # Then send welcome text
+        send_telegram_message(chat_id, welcome_text)
+        
         print(f"🎉 Welcome message sent to {user_name} ({chat_id})")
         
     except Exception as e:
@@ -257,13 +255,13 @@ def send_welcome_image(chat_id):
             
         # Check if welcome.jpeg exists
         import os
-        if not os.path.exists("welcome.jpeg"):
+        if not os.path.exists("welcome.jpg"):
             print("⚠️ welcome.jpeg not found, skipping image")
             return
             
         url = f"https://api.telegram.org/bot{telegram_api}/sendPhoto"
         
-        with open("welcome.jpeg", "rb") as photo:
+        with open("welcome.jpg", "rb") as photo:
             files = {"photo": photo}
             data = {"chat_id": chat_id, "caption": "Welcome to Ballu! 🤖✨"}
             
@@ -342,15 +340,22 @@ def get_intelligent_response(user_message, user_id=None):
                 # Fallback to original method
                 function_result = process_function_call_direct(function_name, parameters)
             
-            # Generate natural response with the result
+            # --- BYPASS GEMINI FOR WEATHER ---
+            if intent == "weather":
+                return {
+                    "response": function_result["result"],
+                    "function_used": function_name,
+                    "function_success": function_result["success"]
+                }
+            # --- END BYPASS ---
+
+            # Generate natural response with the result (for stock/news)
             follow_up_prompt = FOLLOW_UP_PROMPT.format(
                 user_message=user_message,
                 function_name=function_name,
                 function_result=function_result["result"]
             )
-            
             final_response = genai.GenerativeModel('gemini-1.5-flash').generate_content(follow_up_prompt)
-            
             return {
                 "response": final_response.text,
                 "function_used": function_name,
@@ -519,6 +524,12 @@ async def telegram_function(request: Request):
             if is_new_user:
                 send_welcome_message(chat_id, first_name)
                 print(f"🎉 New user {first_name} ({user_id}) joined!")
+        
+        # --- GREETING DETECTION ---
+        if user_message.strip().lower() in ["hi", "hello", "hey", "hey there", "hi there"]:
+            send_welcome_message(chat_id, first_name)
+            return {"status": "greeting processed"}
+        # --- END GREETING DETECTION ---
         
         # Process message with intelligent function calling
         if chat_id and user_message != 'No text':

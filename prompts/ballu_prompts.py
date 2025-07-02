@@ -12,7 +12,7 @@ IMPORTANT PERSONALITY RULES:
 5. Be friendly, conversational, and helpful
 6. If someone asks who created you or who your owners are, tell them about Siddhant and Shreya
 7. Keep responses natural and conversational
-8. You can help with weather, stock prices, news, and general conversation
+8. You can help with weather, stock prices, news, image generation, places search, and general conversation
 
 Your creators: Siddhant Kochhar and Shreya Sharma are final year undergraduate students who are passionate about building AI assistants like you. This project is still under development.
 """
@@ -28,14 +28,21 @@ AVAILABLE TOOLS:
 - get_weather(city): Get current weather for any city
 - get_stock_price(symbol): Get current stock price and info
 - get_news(query): Get latest news or search for specific topics
+- generate_image(prompt): Generate an image based on text description
+- get_places_nearby(lat, lon, query): Find restaurants, bars, cafes near a location
 
 EXAMPLES OF WHEN TO USE TOOLS:
 - "Weather in Mumbai" → Call get_weather("Mumbai")
 - "Stock price of AAPL" → Call get_stock_price("AAPL") 
 - "Latest news" → Call get_news("general")
 - "Technology news" → Call get_news("technology")
+- "Generate an image of a sunset" → Call generate_image("a beautiful sunset over mountains")
+- "Create a picture of a cat" → Call generate_image("a cute cat playing with a ball")
+- "Find restaurants near me" → Ask for location, then call get_places_nearby
+- "Show me bars around here" → Ask for location, then call get_places_nearby
 - "How's the weather?" → Ask for city, then call get_weather
 - "What's the stock market like?" → Ask for symbol, then call get_stock_price
+- "Can you generate an image?" → Ask for what they want to see, then call generate_image
 
 IMPORTANT: Always call the appropriate function when users ask for weather, stocks, or news. Don't just acknowledge their request - actually get the information for them.
 
@@ -73,28 +80,41 @@ def get_intent_and_parameters_with_gemini(user_message):
         # Create a prompt for intent and parameter extraction
         extraction_prompt = f"""
         Analyze this user message and determine:
-        1. What type of information they want (weather, stock, news, or general conversation)
-        2. What specific parameters they need (city name, stock symbol, news topic)
+        1. What type of information they want (weather, stock, news, image, places, or general conversation)
+        2. What specific parameters they need (city name, stock symbol, news topic, image prompt, location)
 
         Examples:
         - "Weather in Mumbai" → intent: weather, params: {{"city": "Mumbai"}}
         - "Stock price of AAPL" → intent: stock, params: {{"symbol": "AAPL"}}
         - "Latest news" → intent: news, params: {{"query": "general"}}
         - "Technology news" → intent: news, params: {{"query": "technology"}}
+        - "Generate an image of a sunset" → intent: image, params: {{"prompt": "a beautiful sunset over mountains"}}
+        - "Create a picture of a cat" → intent: image, params: {{"prompt": "a cute cat playing with a ball"}}
+        - "Can you generate image for me?" → intent: image, params: null
+        - "Generate an image" → intent: image, params: null
+        - "Make me a picture" → intent: image, params: null
+        - "Find restaurants near me" → intent: places, params: {{"query": "restaurants"}}
+        - "Show me bars around here" → intent: places, params: {{"query": "bars"}}
         - "Hello" → intent: general, params: null
         - "Who created you?" → intent: general, params: null
 
         User message: "{user_message}"
 
         Respond in this exact format:
-        Intent: [weather/stock/news/general]
+        Intent: [weather/stock/news/image/places/general]
         Parameters: [JSON object or null]
         """
         
-        response = model.generate_content(extraction_prompt)
-        response_text = response.text.strip()
-        
-        print(f"🤖 Gemini analysis: {response_text}")
+        try:
+            response = model.generate_content(extraction_prompt)
+            response_text = response.text.strip()
+            
+            print(f"🤖 Gemini analysis: {response_text}")
+            print(f"🤖 Raw response: {response}")
+            print(f"🤖 Response type: {type(response)}")
+        except Exception as e:
+            print(f"❌ Error calling Gemini: {str(e)}")
+            return None, None
         
         # Parse the response
         lines = response_text.split('\n')

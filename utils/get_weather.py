@@ -6,9 +6,6 @@ load_dotenv()
 
 weather_api_token = os.getenv('WEATHER_API_KEY')
 
-
-
-
 def detect_weather_request(message):
     weather_keywords = ['weather', 'temperature', 'temp', 'hot', 'cold', 'rain', 'sunny', 'cloudy']
     message_lower = message.lower()
@@ -46,7 +43,7 @@ def get_weather(city_name):
         
         response = requests.get(url)
         data = response.json()
-        
+
         print(f"🌤️ Weather API response status: {response.status_code}")
         print(f"🌤️ Weather API response: {data}")
         

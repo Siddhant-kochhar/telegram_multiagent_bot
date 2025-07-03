@@ -1,6 +1,7 @@
 import os 
 import requests
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
@@ -52,13 +53,42 @@ def get_weather(city_name):
 
         # Check for API errors
         if response.status_code == 200:
-            if 'main' in data and 'weather' in data:
+            if 'main' in data and 'weather' in data and 'wind' in data:
                 temp = data['main']['temp']
+                feels_like = data['main'].get('feels_like', temp)
+                humidity = data['main'].get('humidity', '-')
+                wind_speed = data['wind'].get('speed', '-')
                 description = data['weather'][0]['description']
                 city = data['name']
                 country = data['sys']['country']
+                date_str = datetime.now().strftime('%A, %d %B %Y')
 
-                return f"🌤️ Weather in {city}, {country}:\n🌡️ Temperature: {temp}°C\n☁️ Condition: {description.title()}"
+                # Suggestion based on condition
+                condition = description.lower()
+                if 'rain' in condition or 'shower' in condition:
+                    tip = "Don't forget your umbrella! ☔ Stay dry!"
+                elif 'clear' in condition or 'sun' in condition:
+                    tip = "It's a sunny day! 😎 Don't forget your sunglasses and sunscreen."
+                elif 'cloud' in condition:
+                    tip = "A bit cloudy today. Perfect for a walk! ☁️"
+                elif 'snow' in condition:
+                    tip = "Brrr! It's snowy. Dress warmly and stay safe! ❄️🧣"
+                elif 'storm' in condition or 'thunder' in condition:
+                    tip = "Stormy weather ahead. Stay indoors and stay safe! ⛈️"
+                elif 'mist' in condition or 'fog' in condition:
+                    tip = "It's misty out there. Drive carefully! 🌫️"
+                else:
+                    tip = "Have a wonderful day! 😊"
+
+                return (
+                    f"\n💬 🌤️ Weather in {city}, {country}\n\n"
+                    f"📅 Date: {date_str}  \n"
+                    f"🌡️ Temperature: {temp}°C (Feels like {feels_like}°C)  \n"
+                    f"💧 Humidity: {humidity}%  \n"
+                    f"🌬️ Wind Speed: {wind_speed} m/s  \n"
+                    f"🌥️ Condition: {description.title()}\n\n"
+                    f"📍 {tip}"
+                )
             else:
                 return f"Sorry, I couldn't get complete weather data for {city_name}. Please try again."
         elif response.status_code == 404:

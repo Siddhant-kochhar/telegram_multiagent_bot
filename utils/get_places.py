@@ -1,6 +1,24 @@
 import os
 import requests
+import redis
+import json
 from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta
+
+# Redis connection for caching
+redis_available = False
+redis_client = None
+
+try:
+    redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+    # Test the connection
+    redis_client.ping()
+    redis_available = True
+    print("✅ Redis connected successfully!")
+except Exception as e:
+    print(f"⚠️ Redis not available: {str(e)}")
+    redis_available = False
+    redis_client = None
 
 def get_user_location_from_telegram(chat_id: int, telegram_api: str) -> Optional[Dict[str, float]]:
     """
@@ -32,15 +50,50 @@ def get_user_location_from_telegram(chat_id: int, telegram_api: str) -> Optional
         print(f"❌ Error requesting location: {str(e)}")
         return None
 
-def get_places_nearby(lat: float, lon: float, query: str = "restaurants", radius: int = 5000) -> Optional[Dict[str, Any]]:
+def get_location_name_from_coordinates(lat: float, lon: float) -> str:
     """
-    Find places near the given coordinates using Google Places API
+    Get human-readable location name from coordinates using Google Geocoding API
+    """
+    try:
+        api_key = os.getenv('GOOGLE_PLACES_API_KEY')
+        if not api_key:
+            return f"{lat:.4f}, {lon:.4f}"
+        
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "latlng": f"{lat},{lon}",
+            "key": api_key
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == "OK" and data.get("results"):
+                # Get the most relevant result
+                result = data["results"][0]
+                # Try to get a readable address
+                for component in result.get("address_components", []):
+                    if "locality" in component.get("types", []):
+                        return component.get("long_name", f"{lat:.4f}, {lon:.4f}")
+                
+                # Fallback to formatted address
+                return result.get("formatted_address", f"{lat:.4f}, {lon:.4f}")
+        
+        return f"{lat:.4f}, {lon:.4f}"
+    except Exception as e:
+        print(f"❌ Error getting location name: {str(e)}")
+        return f"{lat:.4f}, {lon:.4f}"
+
+def get_places_nearby(lat: float, lon: float, query: str = "restaurants", radius: int = 5000, page: int = 0) -> Optional[Dict[str, Any]]:
+    """
+    Find places near the given coordinates using Google Places API with caching and pagination
     
     Args:
         lat (float): Latitude
         lon (float): Longitude
         query (str): Search query (e.g., "restaurants", "pubs", "cafes")
-        radius (int): Search radius in meters (default: 5000 - increased for better coverage)
+        radius (int): Search radius in meters (default: 5000)
+        page (int): Page number for pagination (0 = first 5, 1 = next 5, etc.)
     
     Returns:
         Optional[Dict]: Dictionary containing places data or error message
@@ -53,6 +106,26 @@ def get_places_nearby(lat: float, lon: float, query: str = "restaurants", radius
                 "success": False,
                 "error": "GOOGLE_PLACES_API_KEY not found in environment variables"
             }
+        
+        # Create cache key
+        cache_key = f"places:{lat:.4f}:{lon:.4f}:{query}:{radius}"
+        
+        # Check cache first (only for page 0)
+        if page == 0 and redis_available:
+            try:
+                cached_data = redis_client.get(cache_key)
+                if cached_data:
+                    try:
+                        cached_result = json.loads(cached_data)
+                        # Check if cache is still valid (30 minutes)
+                        cache_time = cached_result.get("cache_time", 0)
+                        if datetime.now().timestamp() - cache_time < 1800:  # 30 minutes
+                            print(f"📦 Using cached places data for {query}")
+                            return cached_result
+                    except:
+                        pass
+            except Exception as e:
+                print(f"⚠️ Redis cache error: {str(e)}")
         
         # Google Places API endpoint
         url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
@@ -107,13 +180,15 @@ def get_places_nearby(lat: float, lon: float, query: str = "restaurants", radius
             if data.get("status") == "OK" and "results" in data:
                 places = []
                 
-                for place in data["results"][:10]:  # Limit to 10 results
+                for place in data["results"]:
                     place_info = {
                         "name": place.get("name", "Unknown"),
                         "address": place.get("vicinity", "Address not available"),
                         "rating": place.get("rating", "No rating"),
                         "price_level": place.get("price_level", "Price not available"),
-                        "types": place.get("types", [])
+                        "types": place.get("types", []),
+                        "place_id": place.get("place_id", ""),  # Keep for reference
+                        "maps_link": f"https://www.google.com/maps/search/?api=1&query={requests.utils.quote(place.get('name', 'Unknown') + ' ' + place.get('vicinity', ''))}" if place.get('name') else ""
                     }
                     
                     # Calculate distance if available
@@ -131,18 +206,35 @@ def get_places_nearby(lat: float, lon: float, query: str = "restaurants", radius
                     
                     places.append(place_info)
                 
-                return {
+                # Get location name
+                location_name = get_location_name_from_coordinates(lat, lon)
+                
+                result = {
                     "success": True,
                     "places": places,
                     "query": query,
-                    "location": f"{lat}, {lon}",
-                    "count": len(places)
+                    "location": location_name,
+                    "coordinates": f"{lat}, {lon}",
+                    "count": len(places),
+                    "page": page,
+                    "has_more": len(places) > (page + 1) * 5,
+                    "cache_time": datetime.now().timestamp()
                 }
+                
+                # Cache the result (only for page 0)
+                if page == 0 and redis_available:
+                    try:
+                        redis_client.setex(cache_key, 1800, json.dumps(result))  # Cache for 30 minutes
+                        print(f"📦 Cached places data for {query}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to cache places data: {str(e)}")
+                
+                return result
             elif data.get("status") == "ZERO_RESULTS":
                 # Try with a larger radius if no results found
                 if radius < 20000:  # Try up to 20km
                     print(f"🔍 No results found with {radius}m radius, trying with larger radius...")
-                    return get_places_nearby(lat, lon, query, radius * 2)
+                    return get_places_nearby(lat, lon, query, radius * 2, page)
                 else:
                     return {
                         "success": False,
@@ -187,9 +279,9 @@ def get_places_nearby(lat: float, lon: float, query: str = "restaurants", radius
             "error": f"Unexpected error: {str(e)}"
         }
 
-def format_places_response(places_data: Dict[str, Any]) -> str:
+def format_places_response(places_data: Dict[str, Any], page: int = 0) -> str:
     """
-    Format places data into a readable response
+    Format places data into a readable response with pagination
     """
     if not places_data.get("success"):
         return f"❌ {places_data.get('error', 'Unknown error')}"
@@ -201,47 +293,104 @@ def format_places_response(places_data: Dict[str, Any]) -> str:
     if not places:
         return f"😕 No {query} found near {location}"
     
-    response = f"🍽️ Found {len(places)} {query} near {location}:\n\n"
+    # Pagination: show 5 places per page
+    start_idx = page * 5
+    end_idx = start_idx + 5
+    current_places = places[start_idx:end_idx]
     
-    for i, place in enumerate(places, 1):
+    if not current_places:
+        return f"😕 No more {query} to show. Try a different search!"
+    
+    # Get emoji based on query type
+    query_emoji = "🍽️"
+    query_lower = query.lower()
+    if "pub" in query_lower or "bar" in query_lower:
+        query_emoji = "🍺"
+    elif "cafe" in query_lower or "coffee" in query_lower:
+        query_emoji = "☕"
+    
+    response = f"{query_emoji} Nearby {query.title()} for You\n\n"
+    
+    for i, place in enumerate(current_places, start_idx + 1):
         name = place.get("name", "Unknown")
         address = place.get("address", "Address not available")
         distance = place.get("distance", 0)
         rating = place.get("rating", "No rating")
-        price_level = place.get("price_level", "Price not available")
-        open_now = place.get("open_now", "Unknown")
+        maps_link = place.get("maps_link", "")
         
         # Convert distance to readable format
         if distance < 1000:
             distance_str = f"{distance}m"
         else:
-            distance_str = f"{distance/1000:.1f}km"
+            distance_str = f"{distance/1000:.1f} km"
         
-        # Format price level
-        price_str = ""
-        if price_level != "Price not available":
-            price_str = "💰" * price_level
-        
-        # Format open now status
-        open_str = ""
-        if open_now == True:
-            open_str = "🟢 Open now"
-        elif open_now == False:
-            open_str = "🔴 Closed"
+        # Format rating
+        rating_str = ""
+        if rating != "No rating":
+            rating_str = f"⭐ {rating} | "
         
         response += f"{i}. **{name}**\n"
-        response += f"   📍 {address}\n"
-        response += f"   📏 {distance_str} away\n"
-        
-        if rating != "No rating":
-            response += f"   ⭐ {rating}/5\n"
-        
-        if price_str:
-            response += f"   {price_str}\n"
-        
-        if open_str:
-            response += f"   {open_str}\n"
-        
-        response += "\n"
+        response += f"   {rating_str}📍 {distance_str} away\n"
+        response += f"   📲 [Open in Maps]({maps_link})\n\n"
     
-    return response 
+    # Add pagination info
+    total_pages = (len(places) + 4) // 5  # Ceiling division
+    current_page = page + 1
+    
+    if total_pages > 1:
+        response += f"📄 Page {current_page} of {total_pages}\n"
+        if current_page < total_pages:
+            response += f"💡 Type 'show more {query}' to see the next 5 places!"
+    
+    return response
+
+def get_places_with_pagination(lat: float, lon: float, query: str, page: int = 0) -> Dict[str, Any]:
+    """
+    Get places with pagination support
+    """
+    try:
+        # For page 0, get fresh data or from cache
+        if page == 0:
+            return get_places_nearby(lat, lon, query, page=page)
+        
+        # For subsequent pages, try to get from cache first
+        cache_key = f"places:{lat:.4f}:{lon:.4f}:{query}:5000"
+        if redis_available:
+            try:
+                cached_data = redis_client.get(cache_key)
+                if cached_data:
+                    try:
+                        cached_result = json.loads(cached_data)
+                        # Check if cache is still valid
+                        cache_time = cached_result.get("cache_time", 0)
+                        if datetime.now().timestamp() - cache_time < 1800:  # 30 minutes
+                            # Return paginated result from cached data
+                            places = cached_result.get("places", [])
+                            start_idx = page * 5
+                            end_idx = start_idx + 5
+                            current_places = places[start_idx:end_idx]
+                            
+                            if current_places:
+                                return {
+                                    "success": True,
+                                    "places": current_places,
+                                    "query": query,
+                                    "location": cached_result.get("location", f"{lat:.4f}, {lon:.4f}"),
+                                    "coordinates": f"{lat}, {lon}",
+                                    "count": len(current_places),
+                                    "page": page,
+                                    "has_more": len(places) > end_idx,
+                                    "from_cache": True
+                                }
+                    except:
+                        pass
+            except Exception as e:
+                print(f"⚠️ Redis cache error in pagination: {str(e)}")
+        
+        # If cache miss, get fresh data
+        return get_places_nearby(lat, lon, query, page=page)
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unexpected error: {str(e)}"
+        } 

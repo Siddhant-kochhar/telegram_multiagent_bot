@@ -7,7 +7,9 @@ from utils.get_weather import get_weather
 from utils.get_stock import get_stock_price
 from utils.get_news import get_news
 from utils.generate_image import generate_image
-from utils.get_places import get_places_nearby, get_user_location_from_telegram, format_places_response
+from utils.get_places import get_places_nearby, get_user_location_from_telegram, format_places_response, get_places_with_pagination
+from utils.generate_meme import generate_random_meme, search_meme_templates, format_meme_response, get_meme_suggestions, generate_meme
+from utils.voice_processor import process_voice_message
 from prompts.ballu_prompts import (
     BALLU_BASE_PROMPT, 
     FUNCTION_CALLING_PROMPT, 
@@ -19,6 +21,7 @@ from prompts.ballu_prompts import (
 from pymongo import MongoClient
 from datetime import datetime
 import json
+from typing import Dict, Any
 
 load_dotenv()  # take environment variables
 
@@ -130,6 +133,28 @@ function_declarations = [
             },
             "required": ["lat", "lon", "query"]
         }
+    },
+    {
+        "name": "generate_meme",
+        "description": "Generate a meme using popular templates from Imgflip",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "top_text": {
+                    "type": "string",
+                    "description": "Text for the top of the meme (optional)"
+                },
+                "bottom_text": {
+                    "type": "string",
+                    "description": "Text for the bottom of the meme (optional)"
+                },
+                "template": {
+                    "type": "string",
+                    "description": "Specific meme template name (optional, will use random if not specified)"
+                }
+            },
+            "required": []
+        }
     }
 ]
 
@@ -139,13 +164,62 @@ model = genai.GenerativeModel(
     tools=[{"function_declarations": function_declarations}]
 )
 
+# --- Move FastAPI app definition here ---
+app = FastAPI(title="Ballu - Intelligent Telegram Bot", version="1.0.0")
+
+# --- Move generate_meme_handler here ---
+def generate_meme_handler(top_text: str = "", bottom_text: str = "", template: str = "") -> Dict[str, Any]:
+    """
+    Handler function for meme generation
+    """
+    try:
+        if template:
+            # Search for specific template
+            search_result = search_meme_templates(template)
+            if search_result["success"] and search_result["memes"]:
+                # Use the first matching template
+                selected_meme = search_result["memes"][0]
+                meme_result = generate_meme(
+                    template_id=selected_meme["id"],
+                    top_text=top_text,
+                    bottom_text=bottom_text
+                )
+            else:
+                # Template not found, use random
+                print(f"🎭 Template '{template}' not found, using random template")
+                meme_result = generate_random_meme(top_text, bottom_text)
+        else:
+            # Use random template
+            meme_result = generate_random_meme(top_text, bottom_text)
+        
+        if meme_result["success"]:
+            return {
+                "success": True,
+                "meme_url": meme_result["url"],
+                "page_url": meme_result["page_url"],
+                "top_text": top_text,
+                "bottom_text": bottom_text,
+                "template_used": template or "Random"
+            }
+        else:
+            return {
+                "success": False,
+                "error": meme_result["error"]
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error generating meme: {str(e)}"
+        }
+
 # Function handler mapping
 function_handlers = {
     "get_weather": get_weather,
     "get_stock_price": get_stock_price,
     "get_news": get_news,
     "generate_image": generate_image,
-    "get_places_nearby": get_places_nearby
+    "get_places_nearby": get_places_nearby,
+    "generate_meme": generate_meme_handler
 }
 
 # Debug: Print function handlers on startup
@@ -155,6 +229,7 @@ print(f"🔧 Stock function: {get_stock_price}")
 print(f"🔧 News function: {get_news}")
 print(f"🔧 Image generation function: {generate_image}")
 print(f"🔧 Places function: {get_places_nearby}")
+print(f"🔧 Meme generation function: {generate_meme_handler}")
 
 # Use prompts from the prompts module
 
@@ -296,6 +371,22 @@ def send_welcome_message(chat_id, user_name):
    • "Technology news"
    • "Sports headlines"
 
+🎨 **Image Generation** - Create beautiful images from text!
+   • "Generate an image of a sunset"
+   • "Create a picture of a cute cat"
+
+🎭 **Meme Generation** - Create hilarious memes!
+   • "Make a meme with top: 'When you finally fix a bug' bottom: 'But then another one appears'"
+   • "Generate a meme about programming"
+
+🍽️ **Places Search** - Find restaurants and cafes near you!
+   • "Find restaurants near me"
+   • "Show me bars in the area"
+
+🎤 **Voice Messages** - You can also send me voice messages!
+   • Just hold the microphone button and speak
+   • I'll transcribe and process your request
+
 💬 **General Chat** - Just want to talk? I'm here for that too!
 
 I'm still learning and growing, so feel free to ask me anything! What would you like to know about today? 😊
@@ -323,13 +414,13 @@ def send_welcome_image(chat_id):
             
         # Check if welcome.jpeg exists
         import os
-        if not os.path.exists("welcome.jpg"):
+        if not os.path.exists("welcome.jpeg"):
             print("⚠️ welcome.jpeg not found, skipping image")
             return
             
         url = f"https://api.telegram.org/bot{telegram_api}/sendPhoto"
         
-        with open("welcome.jpg", "rb") as photo:
+        with open("welcome.jpeg", "rb") as photo:
             files = {"photo": photo}
             data = {"chat_id": chat_id, "caption": "Welcome to Ballu! 🤖✨"}
             
@@ -460,7 +551,9 @@ I was created by Siddhant Kochhar and Shreya Sharma, two passionate final year u
 📊 **Stock Information** - Get real-time stock prices!
 📰 **Latest News** - Stay updated with current events!
 🎨 **Image Generation** - Create beautiful images from text descriptions!
+🎭 **Meme Generation** - Create hilarious memes with popular templates!
 🍽️ **Places Search** - Find restaurants, bars, and cafes near you!
+🎤 **Voice Messages** - You can also send me voice messages!
 💬 **General Chat** - Just want to talk? I'm here for that too!
 
 What would you like to know about today? 😊
@@ -481,11 +574,21 @@ What would you like to know about today? 😊
         print(f"🔍 Intent in allowed list: {intent in ['weather', 'stock', 'news', 'image', 'places']}")
         print(f"🔍 Parameters exist: {parameters is not None}")
         
-        # Fallback: If intent extraction failed, try to detect image generation manually
-        if intent is None and any(word in user_message.lower() for word in ['image', 'picture', 'generate', 'create']):
-            print(f"🔄 Fallback: Detecting image intent manually")
-            intent = "image"
-            parameters = None
+        # Fallback: If intent extraction failed, try to detect meme generation first, then image generation
+        if intent is None:
+            message_lower = user_message.lower()
+            
+            # Check for meme-specific keywords first
+            meme_keywords = ['meme', 'memes', 'funny', 'joke', 'humor', 'comic']
+            if any(word in message_lower for word in meme_keywords):
+                print(f"🔄 Fallback: Detecting meme intent manually")
+                intent = "meme"
+                parameters = None
+            # Then check for image generation keywords
+            elif any(word in message_lower for word in ['image', 'picture', 'generate', 'create']):
+                print(f"🔄 Fallback: Detecting image intent manually")
+                intent = "image"
+                parameters = None
         
         # Additional fallback: If intent is still None, treat as general conversation
         if intent is None:
@@ -550,7 +653,7 @@ What would you like to know about today? 😊
                     }
         
         # Step 2: If we have a clear intent and parameters, call the function directly
-        if intent in ["weather", "stock", "news", "image", "places"] and parameters:
+        if intent in ["weather", "stock", "news", "image", "places", "meme"] and parameters:
             function_name = f"get_{intent}"
             if intent == "weather":
                 function_name = "get_weather"
@@ -562,6 +665,8 @@ What would you like to know about today? 😊
                 function_name = "generate_image"
             elif intent == "places":
                 function_name = "get_places_nearby"
+            elif intent == "meme":
+                function_name = "generate_meme"
             
             # Convert parameters to match function signatures
             if intent == "weather" and "city" in parameters:
@@ -582,6 +687,32 @@ What would you like to know about today? 😊
                     "lat": float(parameters["lat"]),
                     "lon": float(parameters["lon"]),
                     "query": parameters["query"]
+                })
+            elif intent == "meme":
+                # generate_meme expects top_text, bottom_text, and template as arguments
+                # Extract meme text from parameters or try to parse from user message
+                top_text = parameters.get("top_text", "")
+                bottom_text = parameters.get("bottom_text", "")
+                template = parameters.get("template", "")
+                
+                # If no parameters provided, try to extract from user message
+                if not top_text and not bottom_text and not template:
+                    # Try to extract meme text from user message
+                    message_lower = user_message.lower()
+                    if "top:" in message_lower and "bottom:" in message_lower:
+                        # Extract text between "top:" and "bottom:"
+                        try:
+                            top_start = message_lower.find("top:") + 4
+                            bottom_start = message_lower.find("bottom:")
+                            top_text = user_message[top_start:bottom_start].strip().strip("'\"")
+                            bottom_text = user_message[bottom_start + 7:].strip().strip("'\"")
+                        except:
+                            pass
+                
+                function_result = process_function_call_direct(function_name, {
+                    "top_text": top_text,
+                    "bottom_text": bottom_text,
+                    "template": template
                 })
             else:
                 # Fallback to original method
@@ -609,16 +740,73 @@ What would you like to know about today? 😊
                     }
             
             # Handle places search specially
-            elif intent == "places" and function_result["success"]:
-                # For places search, format the response nicely
-                places_data = function_result["result"]
-                formatted_response = format_places_response(places_data)
-                return {
-                    "response": formatted_response,
-                    "function_used": function_name,
-                    "function_success": True,
-                    "send_image": False
-                }
+            elif intent == "places":
+                if function_result["success"]:
+                    # For places search, format the response nicely
+                    places_data = function_result["result"]
+                    formatted_response = format_places_response(places_data)
+                    query = parameters.get("query", "restaurants")
+                    return {
+                        "response": formatted_response,
+                        "function_used": function_name,
+                        "function_success": True,
+                        "send_image": True,  # Send query-specific image
+                        "query_type": query
+                    }
+                else:
+                    # Handle places search error
+                    error_msg = function_result["result"]
+                    if "Redis" in error_msg or "cache" in error_msg.lower():
+                        # If Redis error, try without cache
+                        print("🔄 Retrying places search without cache...")
+                        # Remove Redis dependency for this call
+                        from utils.get_places import get_places_nearby
+                        try:
+                            # Force fresh API call
+                            fresh_result = get_places_nearby(
+                                float(parameters["lat"]), 
+                                float(parameters["lon"]), 
+                                parameters["query"], 
+                                page=0
+                            )
+                            if fresh_result["success"]:
+                                formatted_response = format_places_response(fresh_result)
+                                return {
+                                    "response": formatted_response,
+                                    "function_used": function_name,
+                                    "function_success": True,
+                                    "send_image": True,
+                                    "query_type": parameters.get("query", "restaurants")
+                                }
+                        except Exception as e:
+                            print(f"❌ Error in fresh places call: {str(e)}")
+                    
+                    return {
+                        "response": f"❌ Sorry, I couldn't find places near you. {error_msg}",
+                        "function_used": function_name,
+                        "function_success": False,
+                        "send_image": False
+                    }
+            
+            # Handle meme generation specially
+            elif intent == "meme":
+                if function_result["success"]:
+                    # For meme generation, format the response nicely
+                    meme_data = function_result["result"]
+                    formatted_response = format_meme_response(meme_data)
+                    return {
+                        "response": formatted_response,
+                        "function_used": function_name,
+                        "function_success": True,
+                        "send_image": False
+                    }
+                else:
+                    return {
+                        "response": f"❌ Sorry, I couldn't generate the meme. {function_result['result']}",
+                        "function_used": function_name,
+                        "function_success": False,
+                        "send_image": False
+                    }
             
             # --- BYPASS GEMINI FOR WEATHER ---
             elif intent == "weather":
@@ -645,7 +833,7 @@ What would you like to know about today? 😊
             }
         
         # Step 3: If no clear parameters but intent is detected, ask for clarification
-        elif intent in ["weather", "stock", "news", "image", "places"]:
+        elif intent in ["weather", "stock", "news", "image", "places", "meme"]:
             if intent == "image":
                 # Special handling for image generation without prompt
                 clarification_prompt = f"""
@@ -654,6 +842,24 @@ What would you like to know about today? 😊
                 The user wants to generate an image but hasn't specified what they want to see.
                 Please ask them what kind of image they'd like me to create in a friendly, conversational way.
                 Give them some examples like "a beautiful sunset", "a cute cat", "a futuristic city", etc.
+                
+                User message: "{user_message}"
+                """
+            elif intent == "meme":
+                # Special handling for meme generation without text
+                suggestions = get_meme_suggestions()
+                suggestion_text = ", ".join(suggestions[:5])
+                clarification_prompt = f"""
+                {BALLU_BASE_PROMPT}
+                
+                The user wants to generate a meme but hasn't specified what text they want on it.
+                Please ask them what text they'd like on the meme in a friendly, conversational way.
+                Give them some examples like:
+                • "top: 'When you finally fix a bug', bottom: 'But then another one appears'"
+                • "top: 'Monday morning', bottom: 'Me trying to function'"
+                • "top: 'Coffee', bottom: 'My only personality trait'"
+                
+                You can also mention popular meme templates like: {suggestion_text}
                 
                 User message: "{user_message}"
                 """
@@ -750,30 +956,6 @@ def process_function_call_direct(function_name, parameters):
             "success": False
         }
 
-# FastAPI app
-app = FastAPI(title="Ballu - Intelligent Telegram Bot", version="1.0.0")
-
-# Endpoint to check server health 
-@app.get('/')
-def check_health():
-    status = {
-        "message": "Ballu - Intelligent Telegram Bot with Function Calling",
-        "mongodb_connected": db is not None,
-        "gemini_functions": len(function_declarations),
-        "available_functions": list(function_handlers.keys()),
-        "creators": "Siddhant Kochhar & Shreya Sharma"
-    }
-    if db is not None:
-        try:
-            user_count = users_collection.count_documents({})
-            chat_count = chat_history_collection.count_documents({})
-            status["users"] = user_count
-            status["total_chats"] = chat_count
-        except:
-            pass
-    
-    return status
-
 def send_telegram_message(chat_id, text):
     try:
         if telegram_api == 'None':
@@ -798,17 +980,176 @@ async def telegram_function(request: Request):
         # Extracting data from the request
         data = await request.json()
 
-        # Extract message and user information
+        # Extract message and user information FIRST
         message_data = data.get('message', {})
         message_id = message_data.get('message_id')
-        user_message = message_data.get('text', 'No text')
         chat_id = message_data.get('chat', {}).get('id')
         
-        # Extract user information
+        # Extract user information immediately
         user_data = message_data.get('from', {})
         user_id = user_data.get('id')
         first_name = user_data.get('first_name', 'Unknown')
         username = user_data.get('username')
+        
+        # Handle different message types
+        user_message = None
+        voice_file_id = None
+        location_data = None
+        
+        # Check for text message
+        if 'text' in message_data:
+            user_message = message_data.get('text', 'No text')
+            print(f"📝 Text message received: {user_message}")
+        
+        # Check for voice message
+        elif 'voice' in message_data:
+            voice_data = message_data['voice']
+            voice_file_id = voice_data.get('file_id')
+            duration = voice_data.get('duration', 0)
+            print(f"🎤 Voice message received - Duration: {duration}s, File ID: {voice_file_id}")
+            
+            # Process voice message
+            if voice_file_id and telegram_api != 'None':
+                print(f"🎤 Processing voice message...")
+                voice_result = process_voice_message(voice_file_id, telegram_api)
+                
+                if voice_result["success"]:
+                    user_message = voice_result["transcript"]
+                    print(f"✅ Voice transcribed: '{user_message}'")
+                    
+                    # Send confirmation of transcription
+                    confirmation_msg = f"🎤 I heard: \"{user_message}\"\n\nProcessing your request..."
+                    send_telegram_message(chat_id, confirmation_msg)
+                else:
+                    error_msg = f"❌ Sorry, I couldn't understand your voice message. {voice_result.get('error', 'Unknown error')}"
+                    send_telegram_message(chat_id, error_msg)
+                    return {"status": "voice processing failed"}
+            else:
+                error_msg = "❌ Sorry, I couldn't process your voice message. Please try again or send a text message."
+                send_telegram_message(chat_id, error_msg)
+                return {"status": "voice processing failed"}
+        
+        # Check for location message
+        elif 'location' in message_data:
+            location_data = message_data['location']
+            lat = location_data.get('latitude')
+            lon = location_data.get('longitude')
+            print(f"📍 Location received - Lat: {lat}, Lon: {lon}")
+            
+            # Store location in database for the user
+            if user_id and db is not None:
+                try:
+                    users_collection.update_one(
+                        {"user_id": user_id},
+                        {
+                            "$set": {
+                                "last_location": {
+                                    "lat": lat,
+                                    "lon": lon,
+                                    "timestamp": datetime.now()
+                                }
+                            }
+                        }
+                    )
+                    print(f"💾 Location saved for user {user_id}")
+                except Exception as e:
+                    print(f"❌ Error saving location: {str(e)}")
+            
+            # Check if user has a pending places request
+            if user_id and db is not None:
+                try:
+                    # Get recent chat history to see if user was asking for places
+                    recent_chats = chat_history_collection.find(
+                        {"user_id": user_id}
+                    ).sort("timestamp", -1).limit(3)
+                    
+                    recent_chats_list = list(recent_chats)
+                    places_request_found = False
+                    query_type = "restaurants"  # default
+                    
+                    for chat in recent_chats_list:
+                        user_msg = chat.get('user_message', '').lower()
+                        print(f"🔍 Checking recent message: '{user_msg}'")
+                        if any(word in user_msg for word in ['cafe', 'coffee', 'restaurant', 'food', 'bar', 'pub', 'place']):
+                            places_request_found = True
+                            # Determine query type
+                            if 'cafe' in user_msg or 'coffee' in user_msg:
+                                query_type = "cafes"
+                            elif 'restaurant' in user_msg or 'food' in user_msg:
+                                query_type = "restaurants"
+                            elif 'bar' in user_msg or 'pub' in user_msg:
+                                query_type = "pubs"
+                            print(f"🎯 Found places request for: {query_type}")
+                            break
+                    
+                    if places_request_found:
+                        # User was asking for places, now they've shared location
+                        print(f"📍 Processing places request with location for {query_type}")
+                        
+                        # Call places function
+                        function_result = process_function_call_direct("get_places_nearby", {
+                            "lat": lat,
+                            "lon": lon,
+                            "query": query_type
+                        })
+                        
+                        if function_result["success"]:
+                            places_data = function_result["result"]
+                            # Import format_places_response locally
+                            from utils.get_places import format_places_response
+                            formatted_response = format_places_response(places_data)
+                            
+                            # Send response
+                            send_telegram_message(chat_id, formatted_response)
+                            
+                            # Send query-specific image
+                            try:
+                                send_query_image(chat_id, query_type)
+                            except Exception as e:
+                                print(f"⚠️ Could not send query image: {str(e)}")
+                            
+                            # Save chat
+                            save_chat_message(user_id, f"Location shared for {query_type}", formatted_response, "places_location", "get_places_nearby")
+                            
+                            # Mark message as processed
+                            if message_id:
+                                mark_message_processed(message_id)
+                            
+                            return {"status": "location processed for places"}
+                        else:
+                            error_msg = f"❌ Sorry, I couldn't find {query_type} near your location. {function_result['result'].get('error', 'Unknown error')}"
+                            send_telegram_message(chat_id, error_msg)
+                            return {"status": "places search failed"}
+                    else:
+                        # Just location shared without context
+                        response_msg = f"📍 Thanks for sharing your location! Now you can ask me to find places near you like:\n• \"Find restaurants near me\"\n• \"Show me cafes in the area\"\n• \"What bars are nearby?\""
+                        send_telegram_message(chat_id, response_msg)
+                        save_chat_message(user_id, "Location shared", response_msg, "location_shared", None)
+                        return {"status": "location saved"}
+                        
+                except Exception as e:
+                    print(f"❌ Error processing location: {str(e)}")
+                    response_msg = "📍 Thanks for sharing your location! You can now ask me to find places near you."
+                    send_telegram_message(chat_id, response_msg)
+                    return {"status": "location processed"}
+            else:
+                response_msg = "📍 Thanks for sharing your location! You can now ask me to find places near you."
+                send_telegram_message(chat_id, response_msg)
+                return {"status": "location processed"}
+        
+        # If no text, voice, or location message, skip processing
+        if not user_message and not location_data:
+            print(f"⚠️ No text, voice, or location message found in request")
+            return {"status": "no message to process"}
+        
+        # Handle location-only messages (no text processing needed)
+        if location_data and not user_message:
+            # Location was already processed above, just return
+            return {"status": "location processed"}
+        
+        # Only process text messages from here on
+        if not user_message:
+            return {"status": "no text message to process"}
         
         print(f"📨 Message from {first_name} ({user_id}): {user_message}")
         
@@ -827,6 +1168,42 @@ async def telegram_function(request: Request):
             if is_new_user:
                 send_welcome_message(chat_id, first_name)
                 print(f"🎉 New user {first_name} ({user_id}) joined!")
+        
+        # Check for "show more" requests first
+        is_show_more, query, page = is_show_more_request(user_message)
+        
+        if is_show_more and user_id and db is not None:
+            # Handle "show more" request
+            user_info = get_user_info(user_id)
+            if user_info and "last_location" in user_info:
+                stored_location = user_info["last_location"]
+                lat = stored_location["lat"]
+                lon = stored_location["lon"]
+                
+                # Get places with pagination
+                from utils.get_places import get_places_with_pagination, format_places_response
+                places_data = get_places_with_pagination(lat, lon, query, page)
+                
+                if places_data["success"]:
+                    formatted_response = format_places_response(places_data, page)
+                    send_telegram_message(chat_id, formatted_response)
+                    
+                    # Save chat to database
+                    save_chat_message(user_id, user_message, formatted_response, "places_pagination", "get_places_nearby")
+                    
+                    # Mark message as processed
+                    if message_id:
+                        mark_message_processed(message_id)
+                    
+                    return {"status": "show more processed"}
+                else:
+                    error_response = f"❌ Sorry, I couldn't find more {query}. {places_data.get('error', 'Unknown error')}"
+                    send_telegram_message(chat_id, error_response)
+                    return {"status": "show more error"}
+            else:
+                error_response = "❌ I don't have your location saved. Please share your location first!"
+                send_telegram_message(chat_id, error_response)
+                return {"status": "no location for show more"}
         
         # Process message with intelligent function calling
         if chat_id and user_message != 'No text':
@@ -851,17 +1228,26 @@ async def telegram_function(request: Request):
             send_image = ai_result.get("send_image", False)
             generated_image = ai_result.get("generated_image")
             image_caption = ai_result.get("image_caption")
+            query_type = ai_result.get("query_type")
             
             # Send response to user
             send_telegram_message(chat_id, bot_response)
             
             # Send welcome image if greeting was detected
-            if send_image:
+            if send_image and function_used == "greeting":
                 try:
                     send_welcome_image(chat_id)
                     print(f"📸 Welcome image sent to {chat_id} for greeting")
                 except Exception as e:
                     print(f"⚠️ Could not send welcome image: {str(e)}")
+            
+            # Send query-specific image for places
+            elif send_image and function_used == "get_places_nearby" and query_type:
+                try:
+                    send_query_image(chat_id, query_type)
+                    print(f"📸 Query image sent to {chat_id} for {query_type}")
+                except Exception as e:
+                    print(f"⚠️ Could not send query image: {str(e)}")
             
             # Send generated image if available
             if generated_image:
@@ -937,3 +1323,160 @@ async def test_intent_extraction(request: Request):
         "intent": intent,
         "parameters": parameters
     }
+
+# Endpoint to test voice processing
+@app.post('/test-voice')
+async def test_voice_processing(request: Request):
+    """Test endpoint for voice processing"""
+    try:
+        data = await request.json()
+        file_id = data.get('file_id')
+        
+        if not file_id:
+            return {"error": "file_id is required"}
+        
+        if telegram_api == 'None':
+            return {"error": "Telegram token not configured"}
+        
+        result = process_voice_message(file_id, telegram_api)
+        return result
+        
+    except Exception as e:
+        return {"error": f"Voice processing error: {str(e)}"}
+
+# Endpoint to test meme generation
+@app.post('/test-meme')
+async def test_meme_generation(request: Request):
+    """Test endpoint for meme generation"""
+    try:
+        data = await request.json()
+        user_message = data.get('message', '')
+        
+        # Test intent extraction
+        from prompts.ballu_prompts import get_intent_and_parameters_with_gemini
+        intent, parameters = get_intent_and_parameters_with_gemini(user_message)
+        
+        # Test meme generation if intent is meme
+        meme_result = None
+        if intent == "meme":
+            meme_result = generate_meme_handler(
+                top_text=parameters.get("top_text", "") if parameters else "",
+                bottom_text=parameters.get("bottom_text", "") if parameters else "",
+                template=parameters.get("template", "") if parameters else ""
+            )
+        
+        return {
+            "user_message": user_message,
+            "intent": intent,
+            "parameters": parameters,
+            "meme_result": meme_result
+        }
+        
+    except Exception as e:
+        return {"error": f"Meme generation error: {str(e)}"}
+
+# Endpoint to test Imgflip credentials
+@app.get('/test-imgflip')
+async def test_imgflip_credentials():
+    """Test endpoint to verify Imgflip credentials"""
+    try:
+        import os
+        from dotenv import load_dotenv
+        
+        load_dotenv()
+        
+        username = os.getenv('IMGFLIP_USERNAME')
+        password = os.getenv('IMGFLIP_PASSWORD')
+        
+        # Test with a simple meme generation
+        from utils.generate_meme import generate_random_meme
+        
+        test_result = generate_random_meme(
+            top_text="Test",
+            bottom_text="Meme"
+        )
+        
+        return {
+            "credentials_loaded": {
+                "username": username,
+                "password": "***" if password else None
+            },
+            "test_result": test_result,
+            "env_file_exists": os.path.exists('.env')
+        }
+        
+    except Exception as e:
+        return {"error": f"Imgflip test error: {str(e)}"}
+
+def send_query_image(chat_id, query):
+    """Send query-specific image to user"""
+    try:
+        if telegram_api == 'None':
+            return False
+            
+        # Map query to image file
+        query_lower = query.lower()
+        image_file = None
+        
+        if "restaurant" in query_lower or "food" in query_lower or "dining" in query_lower:
+            image_file = "restraunts.jpeg"
+        elif "pub" in query_lower or "bar" in query_lower or "nightlife" in query_lower:
+            image_file = "pubs.jpeg"
+        
+        if not image_file or not os.path.exists(image_file):
+            print(f"⚠️ Image file {image_file} not found for query: {query}")
+            return False
+            
+        url = f"https://api.telegram.org/bot{telegram_api}/sendPhoto"
+        
+        with open(image_file, "rb") as photo:
+            files = {"photo": photo}
+            data = {"chat_id": chat_id, "caption": f"🍽️ Here are some {query} near you!"}
+            
+            response = requests.post(url, data=data, files=files)
+            
+            if response.status_code == 200:
+                print(f"📸 Query image sent to {chat_id} for {query}")
+                return True
+            else:
+                print(f"❌ Failed to send query image: {response.json()}")
+                return False
+                
+    except Exception as e:
+        print(f"❌ Error sending query image: {str(e)}")
+        return False
+
+def is_show_more_request(message: str) -> tuple[bool, str, int]:
+    """
+    Check if the message is a "show more" request for places
+    Returns (is_show_more, query, page)
+    """
+    message_lower = message.lower().strip()
+    
+    # Check for "show more" patterns
+    show_more_patterns = [
+        "show more",
+        "show more places",
+        "more places",
+        "next page",
+        "show next",
+        "load more"
+    ]
+    
+    for pattern in show_more_patterns:
+        if pattern in message_lower:
+            # Extract query from message
+            query = "restaurants"  # default
+            page = 1  # default to next page
+            
+            # Try to extract specific query
+            if "restaurant" in message_lower or "food" in message_lower:
+                query = "restaurants"
+            elif "pub" in message_lower or "bar" in message_lower:
+                query = "pubs"
+            elif "cafe" in message_lower or "coffee" in message_lower:
+                query = "cafes"
+            
+            return True, query, page
+    
+    return False, "", 0

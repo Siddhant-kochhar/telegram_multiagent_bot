@@ -29,6 +29,7 @@ AVAILABLE TOOLS:
 - get_stock_price(symbol): Get current stock price and info
 - get_news(query): Get latest news or search for specific topics
 - generate_image(prompt): Generate an image based on text description
+- generate_meme(top_text, bottom_text, template): Generate a meme with custom text
 - get_places_nearby(lat, lon, query): Find restaurants, bars, cafes near a location
 
 EXAMPLES OF WHEN TO USE TOOLS:
@@ -38,6 +39,9 @@ EXAMPLES OF WHEN TO USE TOOLS:
 - "Technology news" → Call get_news("technology")
 - "Generate an image of a sunset" → Call generate_image("a beautiful sunset over mountains")
 - "Create a picture of a cat" → Call generate_image("a cute cat playing with a ball")
+- "Make a meme with top: 'When you finally fix a bug' bottom: 'But then another one appears'" → Call generate_meme("When you finally fix a bug", "But then another one appears")
+- "Generate a meme about programming" → Call generate_meme("", "", "programming")
+- "Create a meme" → Ask for top and bottom text, then call generate_meme
 - "Find restaurants near me" → Ask for location, then call get_places_nearby
 - "Show me bars around here" → Ask for location, then call get_places_nearby
 - "How's the weather?" → Ask for city, then call get_weather
@@ -93,6 +97,10 @@ def get_intent_and_parameters_with_gemini(user_message):
         - "Can you generate image for me?" → intent: image, params: null
         - "Generate an image" → intent: image, params: null
         - "Make me a picture" → intent: image, params: null
+        - "Make a meme with top: 'When you finally fix a bug' bottom: 'But then another one appears'" → intent: meme, params: {{"top_text": "When you finally fix a bug", "bottom_text": "But then another one appears"}}
+        - "Generate a meme about programming" → intent: meme, params: {{"template": "programming"}}
+        - "Create a meme" → intent: meme, params: null
+        - "Make me a meme" → intent: meme, params: null
         - "Find restaurants near me" → intent: places, params: {{"query": "restaurants"}}
         - "Show me bars around here" → intent: places, params: {{"query": "bars"}}
         - "Hello" → intent: general, params: null
@@ -101,7 +109,7 @@ def get_intent_and_parameters_with_gemini(user_message):
         User message: "{user_message}"
 
         Respond in this exact format:
-        Intent: [weather/stock/news/image/places/general]
+        Intent: [weather/stock/news/image/meme/places/general]
         Parameters: [JSON object or null]
         """
         

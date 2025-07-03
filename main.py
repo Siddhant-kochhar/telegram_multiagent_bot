@@ -563,7 +563,7 @@ What would you like to know about today? 😊
                 "response": greeting_response,
                 "function_used": "greeting",
                 "function_success": True,
-                "send_image": True  # Flag to send welcome image
+                "send_image": False  # Don't send welcome image here since it's handled in send_welcome_message
             }
         
         # Step 1: Use Gemini to determine intent and extract parameters
@@ -1168,6 +1168,13 @@ async def telegram_function(request: Request):
             if is_new_user:
                 send_welcome_message(chat_id, first_name)
                 print(f"🎉 New user {first_name} ({user_id}) joined!")
+            else:
+                # Send welcome image for returning users too
+                try:
+                    send_welcome_image(chat_id)
+                    print(f"📸 Welcome image sent to returning user {first_name} ({user_id})")
+                except Exception as e:
+                    print(f"⚠️ Could not send welcome image to returning user: {str(e)}")
         
         # Check for "show more" requests first
         is_show_more, query, page = is_show_more_request(user_message)

@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi.responses import JSONResponse
 import os 
 import requests
 import io
@@ -1273,15 +1274,11 @@ def send_telegram_message(chat_id, text, parse_mode=None):
         print(f"Error sending telegram message: {str(e)}")
         return {"error": str(e)}
 
-# Main webhook endpoint with intelligent function calling
-@app.post('/webhook')
-async def telegram_function(request: Request):
+async def process_update_async(update_data: dict):
+    """Process Telegram update asynchronously in background"""
     try:
-        # Extracting data from the request
-        data = await request.json()
-
         # Extract message and user information FIRST
-        message_data = data.get('message', {})
+        message_data = update_data.get('message', {})
         message_id = message_data.get('message_id')
         chat_id = message_data.get('chat', {}).get('id')
         
@@ -1290,6 +1287,21 @@ async def telegram_function(request: Request):
         user_id = user_data.get('id')
         first_name = user_data.get('first_name', 'Unknown')
         username = user_data.get('username')
+        
+        print(f"🔄 Processing update for user {first_name} ({user_id}) in chat {chat_id}")
+        
+        # Check for duplicate processing
+        if message_id and is_message_processed(message_id):
+            print(f"⚠️ Message {message_id} already processed, skipping")
+            return
+        
+        # Mark message as processed
+        if message_id:
+            mark_message_processed(message_id)
+        
+        # Create or update user in database
+        if user_id and first_name:
+            create_or_update_user(user_id, first_name, username)
         
         # Handle different message types
         user_message = None
@@ -1300,6 +1312,94 @@ async def telegram_function(request: Request):
         if 'text' in message_data:
             user_message = message_data.get('text', 'No text')
             print(f"📝 Text message received: {user_message}")
+            
+            # Handle /start command
+            if user_message.strip().lower() == '/start':
+                if is_first_time_user(user_id):
+                    send_welcome_message(chat_id, first_name)
+                    return
+                else:
+                    # Returning user
+                    welcome_text = f"Welcome back, {first_name}! 👋\n\nI'm ready to help you with weather, stocks, news, images, memes, and more!\n\nWhat can I do for you today?"
+                    send_telegram_message(chat_id, welcome_text)
+                    return
+            
+            # Handle other commands
+            elif user_message.startswith('/'):
+                command = user_message.lower().strip()
+                
+                if command.startswith('/feedback'):
+                    feedback_text = """
+📝 **How to give feedback:**
+
+I'd love to hear your thoughts! Here are ways you can help me improve:
+
+1. **Tell me what works well** - What features do you love?
+2. **Report bugs** - Found something that doesn't work right?
+3. **Suggest improvements** - What would make me more helpful?
+4. **Request new features** - What else would you like me to do?
+
+Just type your feedback naturally, like:
+• "I love the weather feature but the location detection could be better"
+• "Can you add support for cryptocurrency prices?"
+• "The memes are hilarious! More templates please"
+
+Your feedback helps make Syro better for everyone! 🚀
+
+Created with ❤️ by Siddhant Kochhar & Shreya Sharma
+                    """
+                    send_telegram_message(chat_id, feedback_text)
+                    return
+                
+                elif command.startswith('/help'):
+                    help_text = """
+🤖 **Syro Help - What I can do:**
+
+**Weather** 🌤️
+• "Weather in Mumbai"
+• "How's the weather in Tokyo?"
+
+**Stocks** 📈
+• "AAPL stock price"
+• "Tesla stock info"
+
+**News** 📰
+• "Latest news"
+• "Technology news"
+• "Sports headlines"
+
+**Image Generation** 🎨
+• "Generate image of sunset"
+• "Create picture of cute cat"
+
+**Meme Generation** 😂
+• "Make a meme about Monday"
+• "Generate programming meme"
+
+**Places Search** 📍
+• "Find restaurants near me"
+• "Show bars nearby"
+
+**Voice Messages** 🎤
+• Send voice messages - I'll understand and respond!
+
+**General Chat** 💬
+• Ask me anything! I'm here to help.
+
+**Commands:**
+• /start - Introduction
+• /help - This help message
+• /feedback - How to give feedback
+
+Made with ❤️ by Siddhant & Shreya
+                    """
+                    send_telegram_message(chat_id, help_text)
+                    return
+                
+                else:
+                    # Unknown command
+                    send_telegram_message(chat_id, "🤔 I don't recognize that command. Try /help to see what I can do!")
+                    return
         
         # Check for voice message
         elif 'voice' in message_data:
@@ -1323,11 +1423,11 @@ async def telegram_function(request: Request):
                 else:
                     error_msg = f"❌ Sorry, I couldn't understand your voice message. {voice_result.get('error', 'Unknown error')}"
                     send_telegram_message(chat_id, error_msg)
-                    return {"status": "voice processing failed"}
+                    return
             else:
                 error_msg = "❌ Sorry, I couldn't process your voice message. Please try again or send a text message."
                 send_telegram_message(chat_id, error_msg)
-                return {"status": "voice processing failed"}
+                return
         
         # Check for location message
         elif 'location' in message_data:
@@ -1351,567 +1451,122 @@ async def telegram_function(request: Request):
                             }
                         }
                     )
-                    print(f"💾 Location saved for user {user_id}")
+                    print(f"📍 Location stored for user {user_id}")
                 except Exception as e:
-                    print(f"❌ Error saving location: {str(e)}")
+                    print(f"❌ Error storing location: {str(e)}")
             
-            # Check if user has a pending places request
-            if user_id and db is not None:
-                try:
-                    # Get recent chat history to see if user was asking for places
-                    recent_chats = chat_history_collection.find(
-                        {"user_id": user_id}
-                    ).sort("timestamp", -1).limit(3)
+            # Send confirmation and ask what they're looking for
+            confirmation_msg = f"📍 Thanks for sharing your location! What type of places are you looking for?\n\n• Restaurants 🍽️\n• Bars/Pubs 🍺\n• Cafes ☕\n• Or just tell me what you'd like to find!"
+            send_telegram_message(chat_id, confirmation_msg)
+            return
+        
+        # Process the user message if we have one
+        if user_message:
+            print(f"🧠 Processing message: '{user_message}' from user {user_id}")
+            
+            # Get intelligent response
+            response_data = get_intelligent_response(user_message, user_id, chat_id)
+            
+            if response_data:
+                bot_response = response_data.get("response", "Sorry, I couldn't process that.")
+                function_used = response_data.get("function_used")
+                function_success = response_data.get("function_success")
+                send_image = response_data.get("send_image", False)
+                
+                # Handle generated images
+                if "generated_image" in response_data:
+                    image_bytes = response_data["generated_image"]
+                    image_caption = response_data.get("image_caption", "Generated by Syro!")
                     
-                    recent_chats_list = list(recent_chats)
-                    places_request_found = False
-                    query_type = "restaurants"  # default
+                    # Send the generated image
+                    image_sent = send_generated_image(chat_id, image_bytes, image_caption)
                     
-                    for chat in recent_chats_list:
-                        user_msg = chat.get('user_message', '').lower()
-                        print(f"🔍 Checking recent message: '{user_msg}'")
-                        if any(word in user_msg for word in ['cafe', 'coffee', 'restaurant', 'food', 'bar', 'pub', 'place']):
-                            places_request_found = True
-                            # Determine query type
-                            if 'cafe' in user_msg or 'coffee' in user_msg:
-                                query_type = "cafes"
-                            elif 'restaurant' in user_msg or 'food' in user_msg:
-                                query_type = "restaurants"
-                            elif 'bar' in user_msg or 'pub' in user_msg:
-                                query_type = "pubs"
-                            print(f"🎯 Found places request for: {query_type}")
-                            break
-                    
-                    if places_request_found:
-                        # User was asking for places, now they've shared location
-                        print(f"📍 Processing places request with location for {query_type}")
-                        
-                        # Call places function
-                        function_result = process_function_call_direct("get_places_nearby", {
-                            "lat": lat,
-                            "lon": lon,
-                            "query": query_type
-                        })
-                        
-                        if function_result["success"]:
-                            places_data = function_result["result"]
-                            # Import format_places_response locally
-                            from utils.get_places import format_places_response
-                            formatted_response = format_places_response(places_data)
-                            
-                            # Send response
-                            send_telegram_message(chat_id, formatted_response)
-                            
-                            # Send query-specific image
-                            try:
-                                send_query_image(chat_id, query_type)
-                            except Exception as e:
-                                print(f"⚠️ Could not send query image: {str(e)}")
-                            
-                            # Save chat
-                            save_chat_message(user_id, f"Location shared for {query_type}", formatted_response, "places_location", "get_places_nearby")
-                            
-                            # Mark message as processed
-                            if message_id:
-                                mark_message_processed(message_id)
-                            
-                            return {"status": "location processed for places"}
-                        else:
-                            error_msg = f"❌ Sorry, I couldn't find {query_type} near your location. {function_result['result'].get('error', 'Unknown error')}"
-                            send_telegram_message(chat_id, error_msg)
-                            return {"status": "places search failed"}
+                    if image_sent:
+                        # Image sent successfully, also send text response
+                        send_telegram_message(chat_id, bot_response)
                     else:
-                        # Just location shared without context
-                        response_msg = f"📍 Thanks for sharing your location! Now you can ask me to find places near you like:\n• \"Find restaurants near me\"\n• \"Show me cafes in the area\"\n• \"What bars are nearby?\""
-                        send_telegram_message(chat_id, response_msg)
-                        save_chat_message(user_id, "Location shared", response_msg, "location_shared", None)
-                        return {"status": "location saved"}
-                        
-                except Exception as e:
-                    print(f"❌ Error processing location: {str(e)}")
-                    response_msg = "📍 Thanks for sharing your location! You can now ask me to find places near you."
-                    send_telegram_message(chat_id, response_msg)
-                    return {"status": "location processed"}
-            else:
-                response_msg = "📍 Thanks for sharing your location! You can now ask me to find places near you."
-                send_telegram_message(chat_id, response_msg)
-                return {"status": "location processed"}
-        
-        # Check for photo message
-        elif 'photo' in message_data:
-            photo_data = message_data['photo']
-            # Get the largest photo (last in the list)
-            largest_photo = photo_data[-1] if photo_data else None
-            
-            if largest_photo:
-                photo_file_id = largest_photo.get('file_id')
-                print(f"📸 Photo received - File ID: {photo_file_id}")
+                        # Image failed, send error message
+                        error_msg = f"🎨 I created an image concept for you, but couldn't send the actual image. Here's what I generated:\n\n{bot_response}"
+                        send_telegram_message(chat_id, error_msg)
                 
-                try:
-                    # Download the photo
-                    file_info_url = f"https://api.telegram.org/bot{telegram_api}/getFile?file_id={photo_file_id}"
-                    file_response = requests.get(file_info_url)
+                # Handle query-specific images (restaurants, pubs, etc.)
+                elif send_image and response_data.get("query_type"):
+                    query_type = response_data["query_type"]
+                    image_file = None
                     
-                    if file_response.status_code == 200:
-                        file_data = file_response.json()
-                        if file_data['ok']:
-                            file_path = file_data['result']['file_path']
-                            file_url = f"https://api.telegram.org/file/bot{telegram_api}/{file_path}"
-                            
-                            # Download the actual image
-                            image_response = requests.get(file_url)
-                            if image_response.status_code == 200:
-                                image_bytes = image_response.content
-                                
-                                # Send processing message
-                                processing_msg = "🎵 Analyzing your image for music recommendations... This may take a moment!"
-                                send_telegram_message(chat_id, processing_msg)
-                                
-                                # Get music recommendations
-                                music_result = recommend_music_from_image(image_bytes)
-                                
-                                if music_result["status"] == "success":
-                                    # Format the response
-                                    mood_analysis = music_result["mood_analysis"]
-                                    recommendations = music_result["recommendations"]
-                                    
-                                    # Create mood-specific introduction
-                                    primary_mood = mood_analysis.get('primary_mood', 'Unknown')
-                                    energy_level = mood_analysis.get('energy_level', 'Unknown')
-                                    
-                                    if primary_mood in ['peaceful', 'calm', 'serene', 'tranquil']:
-                                        intro = f"Based on the peaceful mood of your image, here are some soothing Hindi/Punjabi songs:"
-                                    elif primary_mood in ['happy', 'joyful', 'energetic', 'vibrant']:
-                                        intro = f"Your image radiates positive energy! Here are some upbeat Hindi/Punjabi songs:"
-                                    elif primary_mood in ['romantic', 'love', 'dreamy']:
-                                        intro = f"The romantic vibe of your image inspired these beautiful Hindi/Punjabi songs:"
-                                    elif primary_mood in ['sad', 'melancholic', 'emotional']:
-                                        intro = f"For the emotional mood in your image, here are some touching Hindi/Punjabi songs:"
-                                    else:
-                                        intro = f"Based on your image's mood, here are some great Hindi/Punjabi songs:"
-                                    
-                                    response_msg = f"{intro}\n\n"
-                                    
-                                    for i, track in enumerate(recommendations[:8], 1):  # Limit to 8 tracks
-                                        artists_str = ", ".join(track['artists'])
-                                        response_msg += f"{i}. {track['name']} by {artists_str}\n"
-                                        response_msg += f"   � Listen: {track['spotify_url']}\n\n"
-                                    
-                                    if len(recommendations) > 8:
-                                        response_msg += f"... and {len(recommendations) - 8} more tracks!\n\n"
-                                    
-                                    # Add mood summary without formatting
-                                    description = mood_analysis.get('description', '')[:150]
-                                    if description:
-                                        response_msg += f"🎭 Mood detected: {description}..."
-                                    
-                                    # Send the response
-                                    send_telegram_message(chat_id, response_msg)
-                                    
-                                    # Save chat history
-                                    save_chat_message(user_id, "Photo uploaded for music recommendation", response_msg, "music_recommendation", "recommend_music_from_image")
-                                    
-                                else:
-                                    error_msg = f"❌ {music_result.get('message', 'Could not analyze image for music recommendations.')}"
-                                    send_telegram_message(chat_id, error_msg)
-                                
-                                return {"status": "photo processed for music recommendation"}
-                            
-                except Exception as e:
-                    print(f"❌ Error processing photo: {str(e)}")
-                    error_msg = "❌ Sorry, I couldn't process your photo. Please try uploading it again."
-                    send_telegram_message(chat_id, error_msg)
-                    return {"status": "photo processing failed"}
-            
-            else:
-                error_msg = "❌ No photo found in the message. Please try uploading the image again."
-                send_telegram_message(chat_id, error_msg)
-                return {"status": "no photo found"}
-        
-        # If no text, voice, location, or photo message, skip processing
-        if not user_message and not location_data:
-            print(f"⚠️ No text, voice, location, or photo message found in request")
-            return {"status": "no message to process"}
-        
-        # Handle location-only messages (no text processing needed)
-        if location_data and not user_message:
-            # Location was already processed above, just return
-            return {"status": "location processed"}
-        
-        # Only process text messages from here on
-        if not user_message:
-            return {"status": "no text message to process"}
-        
-        print(f"📨 Message from {first_name} ({user_id}): {user_message}")
-        
-        # Check if message has already been processed to prevent infinite loops
-        if message_id and is_message_processed(message_id):
-            print(f"🔄 Message {message_id} already processed, skipping...")
-            return {"status": "message already processed"}
-        
-        # Check if this is a first-time user
-        is_new_user = False
-        if user_id:
-            is_new_user = is_first_time_user(user_id)
-            create_or_update_user(user_id, first_name, username)
-            
-            # Send welcome message for first-time users
-            if is_new_user:
-                send_welcome_message(chat_id, first_name)
-                print(f"🎉 New user {first_name} ({user_id}) joined!")
-            # No welcome image for returning users - they already know Syro
-        
-        # Check for "show more" requests first
-        is_show_more, query, page = is_show_more_request(user_message)
-        
-        if is_show_more and user_id and db is not None:
-            # Handle "show more" request
-            user_info = get_user_info(user_id)
-            if user_info and "last_location" in user_info:
-                stored_location = user_info["last_location"]
-                lat = stored_location["lat"]
-                lon = stored_location["lon"]
+                    # Map query types to image files
+                    if "restaurant" in query_type.lower() or "food" in query_type.lower():
+                        image_file = "restraunts.jpeg"  # Note: keeping original filename
+                    elif "pub" in query_type.lower() or "bar" in query_type.lower():
+                        image_file = "pubs.jpeg"
+                    
+                    # Send query-specific image if available
+                    if image_file and os.path.exists(image_file):
+                        try:
+                            with open(image_file, "rb") as img:
+                                img_bytes = img.read()
+                            send_generated_image(chat_id, img_bytes, f"Places for: {query_type}")
+                        except Exception as e:
+                            print(f"❌ Error sending query image: {str(e)}")
+                    
+                    # Send the text response
+                    send_telegram_message(chat_id, bot_response)
                 
-                # Get places with pagination
-                from utils.get_places import get_places_with_pagination, format_places_response
-                places_data = get_places_with_pagination(lat, lon, query, page)
+                # Handle welcome image
+                elif send_image and (function_used == "greeting" or not function_used):
+                    # Send welcome image for greetings
+                    try:
+                        send_welcome_image(chat_id)
+                    except Exception as e:
+                        print(f"⚠️ Could not send welcome image: {str(e)}")
+                    
+                    # Send the text response
+                    send_telegram_message(chat_id, bot_response)
                 
-                if places_data["success"]:
-                    formatted_response = format_places_response(places_data, page)
-                    send_telegram_message(chat_id, formatted_response)
-                    
-                    # Save chat to database
-                    save_chat_message(user_id, user_message, formatted_response, "places_pagination", "get_places_nearby")
-                    
-                    # Mark message as processed
-                    if message_id:
-                        mark_message_processed(message_id)
-                    
-                    return {"status": "show more processed"}
                 else:
-                    error_response = f"❌ Sorry, I couldn't find more {query}. {places_data.get('error', 'Unknown error')}"
-                    send_telegram_message(chat_id, error_response)
-                    return {"status": "show more error"}
-            else:
-                error_response = "❌ I don't have your location saved. Please share your location first!"
-                send_telegram_message(chat_id, error_response)
-                return {"status": "no location for show more"}
-        
-        # Check for feedback command
-        if user_message and user_message.strip().lower() == '/feedback':
-            feedback_message = """
-🌟 Help me improve! 🌟
-
-I'd love to hear your thoughts and suggestions about my features and performance. Your feedback helps make Syro better for everyone!
-
-📝 Please fill out this quick feedback form:
-https://forms.gle/WULcE9zjGPvypaXz6
-
-Thank you for helping me grow and become a better AI assistant! 💙
-
-What would you like me to help you with today?
-            """
-            send_telegram_message(chat_id, feedback_message)
-            
-            # Save feedback command to chat history
-            if user_id:
-                save_chat_message(user_id, user_message, feedback_message, "feedback", "feedback_form")
-            
-            # Mark message as processed
-            if message_id:
-                mark_message_processed(message_id)
-            
-            return {"status": "feedback form sent"}
-        
-        # Process message with intelligent function calling
-        if chat_id and user_message != 'No text':
-            print(f"🔄 Processing message: '{user_message}' for user {user_id} in chat {chat_id}")
-            
-            # Check if this is an image generation request and send acknowledgment
-            image_keywords = [
-                'generate image', 'create image', 'make image', 'generate a image', 'create a image', 
-                'make a image', 'generate picture', 'create picture', 'make picture', 'draw',
-                'generate an image', 'create an image', 'make an image'
-            ]
-            
-            user_message_lower = user_message.lower()
-            is_image_request = any(keyword in user_message_lower for keyword in image_keywords)
-            
-            if is_image_request:
-                # Send immediate acknowledgment for image generation
-                acknowledgment = "Syro is generating image for you, please wait..."
-                send_telegram_message(chat_id, acknowledgment)
-                print(f"📸 Sent image generation acknowledgment to {chat_id}")
-            
-            try:
-                # Get intelligent response (Gemini decides which functions to call)
-                ai_result = get_intelligent_response(user_message, user_id, chat_id)
-                print(f"✅ AI result: {ai_result}")
-            except Exception as e:
-                print(f"❌ Error in get_intelligent_response: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                ai_result = {
-                    "response": "Sorry, I encountered an error processing your request. Please try again!",
-                    "function_used": None,
-                    "function_success": False,
-                    "send_image": False
-                }
-            
-            bot_response = ai_result["response"]
-            function_used = ai_result["function_used"]
-            send_image = ai_result.get("send_image", False)
-            generated_image = ai_result.get("generated_image")
-            image_caption = ai_result.get("image_caption")
-            query_type = ai_result.get("query_type")
-            
-            # Send welcome image first if greeting was detected
-            if send_image and function_used == "greeting":
-                try:
-                    send_welcome_image(chat_id)
-                    print(f"📸 Welcome image sent to {chat_id} for greeting")
-                except Exception as e:
-                    print(f"⚠️ Could not send welcome image: {str(e)}")
-            
-            # Send response to user (after image for greetings)
-            send_telegram_message(chat_id, bot_response)
-            
-            # Send query-specific image for places
-            if send_image and function_used == "get_places_nearby" and query_type:
-                try:
-                    send_query_image(chat_id, query_type)
-                    print(f"📸 Query image sent to {chat_id} for {query_type}")
-                except Exception as e:
-                    print(f"⚠️ Could not send query image: {str(e)}")
-            
-            # Send generated image if available (for image generation)
-            if generated_image:
-                try:
-                    success = send_generated_image(chat_id, generated_image, image_caption)
-                    if success:
-                        print(f"🎨 Generated image sent to {chat_id}")
-                    else:
-                        print(f"❌ Failed to send generated image to {chat_id}")
-                except Exception as e:
-                    print(f"⚠️ Could not send generated image: {str(e)}")
-            
-            # Determine message type based on function used
-            message_type = function_used if function_used else "general"
-            
-            # Save chat to database
-            if user_id:
-                save_chat_message(user_id, user_message, bot_response, message_type, function_used)
-            
-            # Mark message as processed to prevent infinite loops
-            if message_id:
-                mark_message_processed(message_id)
-
-        return {"status": "message processed"}
-    
-    except Exception as e:
-        print(f"❌ Error processing webhook: {str(e)}")
-        return {"status": "error", "message": str(e)}
-
-# Endpoint to get user statistics
-@app.get('/user/{user_id}')
-def get_user_stats(user_id: int):
-    if db is None:
-        return {"error": "Database not connected"}
-    
-    user_info = get_user_info(user_id)
-    chat_history = get_user_chat_history(user_id, limit=10)
-    
-    # Count function usage
-    function_usage = {}
-    for chat in chat_history:
-        func = chat.get('function_used')
-        if func:
-            function_usage[func] = function_usage.get(func, 0) + 1
-    
-    return {
-        "user_info": user_info,
-        "recent_chats": len(chat_history),
-        "function_usage": function_usage,
-        "chat_history": chat_history
-    }
-
-# Endpoint to test function calling manually
-@app.post('/test-function')
-async def test_function_calling(request: Request):
-    data = await request.json()
-    user_message = data.get('message', 'Hello')
-    
-    result = get_intelligent_response(user_message)
-    return result
-
-# Endpoint to test intent extraction
-@app.post('/test-intent')
-async def test_intent_extraction(request: Request):
-    data = await request.json()
-    user_message = data.get('message', 'Hello')
-    
-    from prompts.ballu_prompts import get_intent_and_parameters_with_gemini
-    intent, parameters = get_intent_and_parameters_with_gemini(user_message)
-    
-    return {
-        "user_message": user_message,
-        "intent": intent,
-        "parameters": parameters
-    }
-
-# Endpoint to test voice processing
-@app.post('/test-voice')
-async def test_voice_processing(request: Request):
-    """Test endpoint for voice processing"""
-    try:
-        data = await request.json()
-        file_id = data.get('file_id')
-        
-        if not file_id:
-            return {"error": "file_id is required"}
-        
-        if telegram_api == 'None':
-            return {"error": "Telegram token not configured"}
-        
-        result = process_voice_message(file_id, telegram_api)
-        return result
-        
-    except Exception as e:
-        return {"error": f"Voice processing error: {str(e)}"}
-
-# Endpoint to test meme generation
-@app.post('/test-meme')
-async def test_meme_generation(request: Request):
-    """Test endpoint for meme generation"""
-    try:
-        data = await request.json()
-        user_message = data.get('message', '')
-        
-        # Test intent extraction
-        from prompts.ballu_prompts import get_intent_and_parameters_with_gemini
-        intent, parameters = get_intent_and_parameters_with_gemini(user_message)
-        
-        # Test meme generation if intent is meme
-        meme_result = None
-        if intent == "meme":
-            meme_result = generate_meme_handler(
-                top_text=parameters.get("top_text", "") if parameters else "",
-                bottom_text=parameters.get("bottom_text", "") if parameters else "",
-                template=parameters.get("template", "") if parameters else ""
-            )
-        
-        return {
-            "user_message": user_message,
-            "intent": intent,
-            "parameters": parameters,
-            "meme_result": meme_result
-        }
-        
-    except Exception as e:
-        return {"error": f"Meme generation error: {str(e)}"}
-
-# Endpoint to test Imgflip credentials
-@app.get('/test-imgflip')
-async def test_imgflip_credentials():
-    """Test endpoint to verify Imgflip credentials"""
-    try:
-        import os
-        from dotenv import load_dotenv
-        
-        load_dotenv()
-        
-        username = os.getenv('IMGFLIP_USERNAME')
-        password = os.getenv('IMGFLIP_PASSWORD')
-        
-        # Test with a simple meme generation
-        from utils.generate_meme import generate_random_meme
-        
-        test_result = generate_random_meme(
-            top_text="Test",
-            bottom_text="Meme"
-        )
-        
-        return {
-            "credentials_loaded": {
-                "username": username,
-                "password": "***" if password else None
-            },
-            "test_result": test_result,
-            "env_file_exists": os.path.exists('.env')
-        }
-        
-    except Exception as e:
-        return {"error": f"Imgflip test error: {str(e)}"}
-
-def send_query_image(chat_id, query):
-    """Send query-specific image to user"""
-    try:
-        if telegram_api == 'None':
-            return False
-            
-        # Map query to image file
-        query_lower = query.lower()
-        image_file = None
-        
-        if "restaurant" in query_lower or "food" in query_lower or "dining" in query_lower:
-            image_file = "restraunts.jpeg"
-        elif "pub" in query_lower or "bar" in query_lower or "nightlife" in query_lower:
-            image_file = "pubs.jpeg"
-        
-        if not image_file or not os.path.exists(image_file):
-            print(f"⚠️ Image file {image_file} not found for query: {query}")
-            return False
-            
-        url = f"https://api.telegram.org/bot{telegram_api}/sendPhoto"
-        
-        with open(image_file, "rb") as photo:
-            files = {"photo": photo}
-            data = {"chat_id": chat_id, "caption": f"🍽️ Here are some {query} near you!"}
-            
-            response = requests.post(url, data=data, files=files)
-            
-            if response.status_code == 200:
-                print(f"📸 Query image sent to {chat_id} for {query}")
-                return True
-            else:
-                print(f"❌ Failed to send query image: {response.json()}")
-                return False
+                    # Regular text response
+                    send_telegram_message(chat_id, bot_response)
                 
+                # Save to chat history
+                save_chat_message(
+                    user_id, 
+                    user_message, 
+                    bot_response, 
+                    function_used or "general",
+                    function_used
+                )
+                
+                print(f"✅ Response sent to {first_name} ({user_id})")
+            
+            else:
+                # Fallback response
+                error_response = "Sorry, I couldn't process your message right now. Please try again!"
+                send_telegram_message(chat_id, error_response)
+                print(f"❌ Failed to get response for user {user_id}")
+        
+        else:
+            # No recognizable message type
+            print(f"⚠️ No recognizable message type in update")
+            
     except Exception as e:
-        print(f"❌ Error sending query image: {str(e)}")
-        return False
+        print(f"❌ Error in process_update_async: {str(e)}")
+        traceback.print_exc()
 
-def is_show_more_request(message: str) -> tuple[bool, str, int]:
-    """
-    Check if the message is a "show more" request for places
-    Returns (is_show_more, query, page)
-    """
-    message_lower = message.lower().strip()
-    
-    # Check for "show more" patterns
-    show_more_patterns = [
-        "show more",
-        "show more places",
-        "more places",
-        "next page",
-        "show next",
-        "load more"
-    ]
-    
-    for pattern in show_more_patterns:
-        if pattern in message_lower:
-            # Extract query from message
-            query = "restaurants"  # default
-            page = 1  # default to next page
-            
-            # Try to extract specific query
-            if "restaurant" in message_lower or "food" in message_lower:
-                query = "restaurants"
-            elif "pub" in message_lower or "bar" in message_lower:
-                query = "pubs"
-            elif "cafe" in message_lower or "coffee" in message_lower:
-                query = "cafes"
-            
-            return True, query, page
-    
-    return False, "", 0
+# Main webhook endpoint with quick response
+@app.post('/webhook')
+async def webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle Telegram webhook - respond quickly with 200"""
+    try:
+        # Get the update data
+        update_data = await request.json()
+        
+        # Process in background to respond quickly
+        background_tasks.add_task(process_update_async, update_data)
+        
+        # Return 200 immediately to prevent Telegram retries
+        return JSONResponse(content={"ok": True}, status_code=200)
+        
+    except Exception as e:
+        print(f"❌ Webhook error: {str(e)}")
+        # Still return 200 to prevent Telegram retries
+        return JSONResponse(content={"ok": False, "error": str(e)}, status_code=200)

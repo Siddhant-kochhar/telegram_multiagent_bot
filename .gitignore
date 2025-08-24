@@ -140,3 +140,8 @@ yarn-error.log*
 *.temp
 temp/
 tmp/
+
+# Deployment artifacts
+.render/
+*.log.*
+deploy.log

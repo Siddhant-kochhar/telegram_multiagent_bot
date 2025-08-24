@@ -209,6 +209,28 @@ model = genai.GenerativeModel(
 # --- Move FastAPI app definition here ---
 app = FastAPI(title="Syro - Intelligent Telegram Bot", version="1.0.0")
 
+# Health check endpoint for Render
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for deployment monitoring"""
+    return {
+        "status": "healthy",
+        "service": "Syro Telegram Bot",
+        "version": "1.0.0",
+        "mongodb": "connected" if db is not None else "disconnected"
+    }
+
+# Root endpoint
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "message": "🤖 Syro - Intelligent Telegram Bot is running!",
+        "version": "1.0.0",
+        "status": "active",
+        "creator": "Siddhant Kochhar & Shreya Sharma"
+    }
+
 # --- Move generate_meme_handler here ---
 def generate_meme_handler(top_text: str = "", bottom_text: str = "", template: str = "") -> Dict[str, Any]:
     """

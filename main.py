@@ -1570,3 +1570,9 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         print(f"❌ Webhook error: {str(e)}")
         # Still return 200 to prevent Telegram retries
         return JSONResponse(content={"ok": False, "error": str(e)}, status_code=200)
+
+# Alternative webhook endpoint for /webhook/webhook URL pattern
+@app.post('/webhook/webhook')
+async def webhook_double(request: Request, background_tasks: BackgroundTasks):
+    """Alternative webhook endpoint for double webhook URL pattern"""
+    return await webhook(request, background_tasks)

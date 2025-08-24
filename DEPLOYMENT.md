@@ -27,6 +27,8 @@ GOOGLE_PLACES_API_KEY=your_google_places_api_key
 HUGGINGFACE_TOKEN=your_huggingface_token
 SPOTIFY_CLIENT_ID=your_spotify_client_id
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
+UPSTASH_REDIS_REST_URL=your_upstash_redis_url
+UPSTASH_REDIS_REST_TOKEN=your_upstash_redis_token
 PORT=8000
 PYTHON_VERSION=3.9.18
 ```

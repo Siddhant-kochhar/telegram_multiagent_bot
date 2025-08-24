@@ -68,143 +68,140 @@ except Exception as e:
 # Configure Gemini with Function Calling
 genai.configure(api_key=gemini_api)
 
-# Define function schemas for Gemini
-function_declarations = [
-    {
-        "name": "get_weather_with_gemini",
-        "description": "Get current weather information for a specific city using Gemini AI",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "city": {
-                    "type": "string",
-                    "description": "The city name to get weather for (e.g., 'Mumbai', 'New York', 'London')"
-                }
-            },
-            "required": ["city"]
-        }
-    },
-    {
-        "name": "get_stock_with_gemini",
-        "description": "Get current stock price and information for a specific stock symbol using Gemini AI",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "symbol": {
-                    "type": "string",
-                    "description": "Stock symbol (e.g., 'AAPL', 'GOOGL', 'TSLA', 'RELIANCE.NS' for Indian stocks)"
-                }
-            },
-            "required": ["symbol"]
-        }
-    },
-    {
-        "name": "get_news_with_gemini",
-        "description": "Get latest news articles using Gemini AI. Can get general news or search for specific topics",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "News search query. Use 'general' for latest news, or specific topics like 'technology', 'sports', 'politics'"
-                }
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "generate_image_with_gemini",
-        "description": "Generate a detailed image description based on a text prompt using Gemini AI",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "The text description of the image you want to generate (e.g., 'a beautiful sunset over mountains', 'a cute cat playing with a ball')"
-                }
-            },
-            "required": ["prompt"]
-        }
-    },
-    {
-        "name": "get_places_nearby",
-        "description": "Find restaurants, bars, cafes, and other places near a specific location",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "lat": {
-                    "type": "number",
-                    "description": "Latitude coordinate of the location"
-                },
-                "lon": {
-                    "type": "number",
-                    "description": "Longitude coordinate of the location"
-                },
-                "query": {
-                    "type": "string",
-                    "description": "Type of places to search for (e.g., 'restaurants', 'pubs', 'cafes', 'bars')"
-                }
-            },
-            "required": ["lat", "lon", "query"]
-        }
-    },
-    {
-        "name": "generate_meme_with_gemini",
-        "description": "Generate a creative meme concept using Gemini AI",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "top_text": {
-                    "type": "string",
-                    "description": "Text for the top of the meme (optional)"
-                },
-                "bottom_text": {
-                    "type": "string",
-                    "description": "Text for the bottom of the meme (optional)"
-                },
-                "template": {
-                    "type": "string",
-                    "description": "Specific meme template name (optional, will use random if not specified)"
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "get_general_response",
-        "description": "Get a general response for any query using Gemini AI",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Any general question or query"
-                }
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "recommend_music_from_image",
-        "description": "Analyze the mood of an uploaded image and recommend matching music from Spotify",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "image_description": {
-                    "type": "string",
-                    "description": "Description of the image to analyze for mood-based music recommendations"
-                }
-            },
-            "required": ["image_description"]
-        }
-    }
-]
+# Define function schemas for Gemini - commented out for now due to version compatibility
+# function_declarations = [
+#     {
+#         "name": "get_weather_with_gemini",
+#         "description": "Get current weather information for a specific city using Gemini AI",
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "city": {
+#                     "type": "string",
+#                     "description": "The city name to get weather for (e.g., 'Mumbai', 'New York', 'London')"
+#                 }
+#             },
+#             "required": ["city"]
+#         }
+#     },
+#     {
+#         "name": "get_stock_with_gemini",
+#         "description": "Get current stock price and information for a specific stock symbol using Gemini AI",
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "symbol": {
+#                     "type": "string",
+#                     "description": "Stock symbol (e.g., 'AAPL', 'GOOGL', 'TSLA', 'RELIANCE.NS' for Indian stocks)"
+#                 }
+#             },
+#             "required": ["symbol"]
+#         }
+#     },
+#     {
+#         "name": "get_news_with_gemini",
+#         "description": "Get latest news articles using Gemini AI. Can get general news or search for specific topics",
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "query": {
+#                     "type": "string",
+#                     "description": "News search query. Use 'general' for latest news, or specific topics like 'technology', 'sports', 'politics'"
+#                 }
+#             },
+#             "required": ["query"]
+#         }
+#     },
+#     {
+#         "name": "generate_image_with_gemini",
+#         "description": "Generate a detailed image description based on a text prompt using Gemini AI",
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "prompt": {
+#                     "type": "string",
+#                     "description": "The text description of the image you want to generate (e.g., 'a beautiful sunset over mountains', 'a cute cat playing with a ball')"
+#                 }
+#             },
+#             "required": ["prompt"]
+#         }
+#     },
+#     {
+#         "name": "get_places_nearby",
+#         "description": "Find restaurants, bars, cafes, and other places near a specific location",
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "lat": {
+#                     "type": "number",
+#                     "description": "Latitude coordinate of the location"
+#                 },
+#                 "lon": {
+#                     "type": "number",
+#                     "description": "Longitude coordinate of the location"
+#                 },
+#                 "query": {
+#                     "type": "string",
+#                     "description": "Type of places to search for (e.g., 'restaurants', 'pubs', 'cafes', 'bars')"
+#                 }
+#             },
+#             "required": ["lat", "lon", "query"]
+#         }
+#     },
+#     {
+#         "name": "generate_meme_with_gemini",
+#         "description": "Generate a creative meme concept using Gemini AI",
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "top_text": {
+#                     "type": "string",
+#                     "description": "Text for the top of the meme (optional)"
+#                 },
+#                 "bottom_text": {
+#                     "type": "string",
+#                     "description": "Text for the bottom of the meme (optional)"
+#                 },
+#                 "template": {
+#                     "type": "string",
+#                     "description": "Specific meme template name (optional, will use random if not specified)"
+#                 }
+#             },
+#             "required": []
+#         }
+#     },
+#     {
+#         "name": "get_general_response",
+#         "description": "Get a general response for any query using Gemini AI",
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "query": {
+#                     "type": "string",
+#                     "description": "Any general question or query"
+#                 }
+#             },
+#             "required": ["query"]
+#         }
+#     },
+#     {
+#         "name": "recommend_music_from_image",
+#         "description": "Analyze the mood of an uploaded image and recommend matching music from Spotify",
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "image_description": {
+#                     "type": "string",
+#                     "description": "Description of the image to analyze for mood-based music recommendations"
+#                 }
+#             },
+#             "required": ["image_description"]
+#         }
+#     }
+# ]
 
-# Create Gemini model with function calling
-model = genai.GenerativeModel(
-    'gemini-1.5-flash',
-    tools=[{"function_declarations": function_declarations}]
-)
+# Create Gemini model without function calling first
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 # --- Move FastAPI app definition here ---
 app = FastAPI(title="Syro - Intelligent Telegram Bot", version="1.0.0")

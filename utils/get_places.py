@@ -1,20 +1,37 @@
 import os
 import requests
-import redis
 import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
-# Redis connection for caching
+# Load environment variables
+load_dotenv()
+
+# Redis connection for caching (using Upstash Redis Cloud)
 redis_available = False
 redis_client = None
 
 try:
-    redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
-    # Test the connection
-    redis_client.ping()
-    redis_available = True
-    print("✅ Redis connected successfully!")
+    # Try Upstash Redis first
+    upstash_url = os.getenv('UPSTASH_REDIS_REST_URL')
+    upstash_token = os.getenv('UPSTASH_REDIS_REST_TOKEN')
+    
+    if upstash_url and upstash_token:
+        from upstash_redis import Redis
+        redis_client = Redis(url=upstash_url, token=upstash_token)
+        # Test the connection
+        redis_client.ping()
+        redis_available = True
+        print("✅ Upstash Redis connected successfully!")
+    else:
+        # Fallback to local Redis
+        import redis
+        redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+        redis_client.ping()
+        redis_available = True
+        print("✅ Local Redis connected successfully!")
+        
 except Exception as e:
     print(f"⚠️ Redis not available: {str(e)}")
     redis_available = False

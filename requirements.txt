@@ -4,7 +4,8 @@ python-telegram-bot
 requests 
 python-dotenv
 google-generativeai
-yfinance
 pymongo
 redis
 openai-whisper
+Pillow
+spotipy

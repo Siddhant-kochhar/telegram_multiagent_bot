@@ -1,14 +1,21 @@
 from fastapi import FastAPI, Request
 import os 
 import requests
+import io
+import re
+import traceback
 from dotenv import load_dotenv
 import google.generativeai as genai
-from utils.get_weather import get_weather
-from utils.get_stock import get_stock_price
-from utils.get_news import get_news
-from utils.generate_image import generate_image
+from utils.gemini_handler import (
+    get_weather_with_gemini,
+    get_stock_with_gemini, 
+    get_news_with_gemini,
+    generate_image_with_gemini,
+    generate_meme_with_gemini,
+    get_general_response,
+    recommend_music_from_image
+)
 from utils.get_places import get_places_nearby, get_user_location_from_telegram, format_places_response, get_places_with_pagination
-from utils.generate_meme import generate_random_meme, search_meme_templates, format_meme_response, get_meme_suggestions, generate_meme
 from utils.voice_processor import process_voice_message
 from prompts.ballu_prompts import (
     BALLU_BASE_PROMPT, 
@@ -25,11 +32,8 @@ from typing import Dict, Any
 
 load_dotenv()  # take environment variables
 
-# API keys
+# API keys  
 telegram_api = os.getenv('TELEGRAM_TOKEN','None')
-weather_api_token = os.getenv('WEATHER_API_KEY','None')
-stock_api = os.getenv('STOCK_API_KEY','None')
-news_api = os.getenv('NEWS_API_KEY','None')
 gemini_api = os.getenv('GEMINI_API_KEY','None')
 
 # MongoDB connection
@@ -57,8 +61,8 @@ genai.configure(api_key=gemini_api)
 # Define function schemas for Gemini
 function_declarations = [
     {
-        "name": "get_weather",
-        "description": "Get current weather information for a specific city",
+        "name": "get_weather_with_gemini",
+        "description": "Get current weather information for a specific city using Gemini AI",
         "parameters": {
             "type": "object",
             "properties": {
@@ -71,8 +75,8 @@ function_declarations = [
         }
     },
     {
-        "name": "get_stock_price",
-        "description": "Get current stock price and information for a specific stock symbol",
+        "name": "get_stock_with_gemini",
+        "description": "Get current stock price and information for a specific stock symbol using Gemini AI",
         "parameters": {
             "type": "object",
             "properties": {
@@ -85,8 +89,8 @@ function_declarations = [
         }
     },
     {
-        "name": "get_news",
-        "description": "Get latest news articles. Can get general news or search for specific topics",
+        "name": "get_news_with_gemini",
+        "description": "Get latest news articles using Gemini AI. Can get general news or search for specific topics",
         "parameters": {
             "type": "object",
             "properties": {
@@ -99,8 +103,8 @@ function_declarations = [
         }
     },
     {
-        "name": "generate_image",
-        "description": "Generate an image based on a text prompt using AI",
+        "name": "generate_image_with_gemini",
+        "description": "Generate a detailed image description based on a text prompt using Gemini AI",
         "parameters": {
             "type": "object",
             "properties": {
@@ -135,8 +139,8 @@ function_declarations = [
         }
     },
     {
-        "name": "generate_meme",
-        "description": "Generate a meme using popular templates from Imgflip",
+        "name": "generate_meme_with_gemini",
+        "description": "Generate a creative meme concept using Gemini AI",
         "parameters": {
             "type": "object",
             "properties": {
@@ -155,6 +159,34 @@ function_declarations = [
             },
             "required": []
         }
+    },
+    {
+        "name": "get_general_response",
+        "description": "Get a general response for any query using Gemini AI",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Any general question or query"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "recommend_music_from_image",
+        "description": "Analyze the mood of an uploaded image and recommend matching music from Spotify",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "image_description": {
+                    "type": "string",
+                    "description": "Description of the image to analyze for mood-based music recommendations"
+                }
+            },
+            "required": ["image_description"]
+        }
     }
 ]
 
@@ -165,38 +197,21 @@ model = genai.GenerativeModel(
 )
 
 # --- Move FastAPI app definition here ---
-app = FastAPI(title="Ballu - Intelligent Telegram Bot", version="1.0.0")
+app = FastAPI(title="Syro - Intelligent Telegram Bot", version="1.0.0")
 
 # --- Move generate_meme_handler here ---
 def generate_meme_handler(top_text: str = "", bottom_text: str = "", template: str = "") -> Dict[str, Any]:
     """
-    Handler function for meme generation
+    Handler function for meme generation using Gemini
     """
     try:
-        if template:
-            # Search for specific template
-            search_result = search_meme_templates(template)
-            if search_result["success"] and search_result["memes"]:
-                # Use the first matching template
-                selected_meme = search_result["memes"][0]
-                meme_result = generate_meme(
-                    template_id=selected_meme["id"],
-                    top_text=top_text,
-                    bottom_text=bottom_text
-                )
-            else:
-                # Template not found, use random
-                print(f"🎭 Template '{template}' not found, using random template")
-                meme_result = generate_random_meme(top_text, bottom_text)
-        else:
-            # Use random template
-            meme_result = generate_random_meme(top_text, bottom_text)
+        # Use Gemini to generate meme concept
+        meme_result = generate_meme_with_gemini(top_text, bottom_text, template)
         
-        if meme_result["success"]:
+        if meme_result["status"] == "success":
             return {
                 "success": True,
-                "meme_url": meme_result["url"],
-                "page_url": meme_result["page_url"],
+                "meme_concept": meme_result,
                 "top_text": top_text,
                 "bottom_text": bottom_text,
                 "template_used": template or "Random"
@@ -204,7 +219,7 @@ def generate_meme_handler(top_text: str = "", bottom_text: str = "", template: s
         else:
             return {
                 "success": False,
-                "error": meme_result["error"]
+                "error": meme_result.get("message", "Unknown error")
             }
     except Exception as e:
         return {
@@ -214,22 +229,25 @@ def generate_meme_handler(top_text: str = "", bottom_text: str = "", template: s
 
 # Function handler mapping
 function_handlers = {
-    "get_weather": get_weather,
-    "get_stock_price": get_stock_price,
-    "get_news": get_news,
-    "generate_image": generate_image,
+    "get_weather_with_gemini": get_weather_with_gemini,
+    "get_stock_with_gemini": get_stock_with_gemini,
+    "get_news_with_gemini": get_news_with_gemini,
+    "generate_image_with_gemini": generate_image_with_gemini,
     "get_places_nearby": get_places_nearby,
-    "generate_meme": generate_meme_handler
+    "generate_meme_with_gemini": generate_meme_handler,
+    "get_general_response": get_general_response,
+    "recommend_music_from_image": recommend_music_from_image
 }
 
 # Debug: Print function handlers on startup
 print(f"🔧 Available function handlers: {list(function_handlers.keys())}")
-print(f"🔧 Weather function: {get_weather}")
-print(f"🔧 Stock function: {get_stock_price}")
-print(f"🔧 News function: {get_news}")
-print(f"🔧 Image generation function: {generate_image}")
+print(f"🔧 Weather function: {get_weather_with_gemini}")
+print(f"🔧 Stock function: {get_stock_with_gemini}")
+print(f"🔧 News function: {get_news_with_gemini}")
+print(f"🔧 Image generation function: {generate_image_with_gemini}")
 print(f"🔧 Places function: {get_places_nearby}")
 print(f"🔧 Meme generation function: {generate_meme_handler}")
+print(f"🔧 General response function: {get_general_response}")
 
 # Use prompts from the prompts module
 
@@ -354,42 +372,44 @@ def send_welcome_message(chat_id, user_name):
     """Send welcome message to first-time user"""
     try:
         welcome_text = f"""
-🎉 Welcome {user_name}! I'm Ballu, your friendly AI assistant! 🤖
+Hi {user_name}! I'm Syro, your friendly AI assistant!
 
-🌟 **What I can help you with:**
+What I can help you with:
 
-🌤️ **Weather Updates** - Ask me about weather in any city!
-   • "Weather in Mumbai"
-   • "How's the weather in New York?"
+Weather Updates - Ask me about weather in any city!
+   "Weather in Mumbai"
+   "How's the weather in New York?"
 
-📊 **Stock Information** - Get real-time stock prices!
-   • "Stock price of AAPL"
-   • "What's TSLA trading at?"
+Stock Information - Get real-time stock prices!
+   "Stock price of AAPL"
+   "What's TSLA trading at?"
 
-📰 **Latest News** - Stay updated with current events!
-   • "Latest news"
-   • "Technology news"
-   • "Sports headlines"
+Latest News - Stay updated with current events!
+   "Latest news"
+   "Technology news"
+   "Sports headlines"
 
-🎨 **Image Generation** - Create beautiful images from text!
-   • "Generate an image of a sunset"
-   • "Create a picture of a cute cat"
+Image Generation - Create beautiful images from text!
+   "Generate an image of a sunset"
+   "Create a picture of a cute cat"
 
-🎭 **Meme Generation** - Create hilarious memes!
-   • "Make a meme with top: 'When you finally fix a bug' bottom: 'But then another one appears'"
-   • "Generate a meme about programming"
+Meme Generation - Create hilarious memes!
+   "Make a meme with top: 'When you finally fix a bug' bottom: 'But then another one appears'"
+   "Generate a meme about programming"
 
-🍽️ **Places Search** - Find restaurants and cafes near you!
-   • "Find restaurants near me"
-   • "Show me bars in the area"
+Places Search - Find restaurants and cafes near you!
+   "Find restaurants near me"
+   "Show me bars in the area"
 
-🎤 **Voice Messages** - You can also send me voice messages!
-   • Just hold the microphone button and speak
-   • I'll transcribe and process your request
+Voice Messages - You can also send me voice messages!
+   Just hold the microphone button and speak
+   I'll transcribe and process your request
 
-💬 **General Chat** - Just want to talk? I'm here for that too!
+General Chat - Just want to talk? I'm here for that too!
 
-I'm still learning and growing, so feel free to ask me anything! What would you like to know about today? 😊
+I was created by Siddhant Kochhar and Shreya Sharma, two passionate final year undergraduate students who love building AI assistants like me.
+
+I'm still learning and growing, so feel free to ask me anything! What would you like to know about today?
         """
         
         # Send welcome image first
@@ -422,7 +442,7 @@ def send_welcome_image(chat_id):
         
         with open("welcome.jpeg", "rb") as photo:
             files = {"photo": photo}
-            data = {"chat_id": chat_id, "caption": "Welcome to Ballu! 🤖✨"}
+            data = {"chat_id": chat_id, "caption": "Welcome to Syro!"}
             
             response = requests.post(url, data=data, files=files)
             
@@ -434,7 +454,8 @@ def send_welcome_image(chat_id):
     except Exception as e:
         print(f"❌ Error sending welcome image: {str(e)}")
 
-def send_generated_image(chat_id, image_bytes, caption="Generated by Ballu! 🎨"):
+# Restore the send_generated_image function for actual image sending
+def send_generated_image(chat_id, image_bytes, caption="Generated by Syro!"):
     """Send generated image to user"""
     try:
         if telegram_api == 'None':
@@ -458,6 +479,10 @@ def send_generated_image(chat_id, image_bytes, caption="Generated by Ballu! 🎨
         else:
             print(f"❌ Failed to send generated image: {response.json()}")
             return False
+            
+    except Exception as e:
+        print(f"❌ Error sending generated image: {str(e)}")
+        return False
             
     except Exception as e:
         print(f"❌ Error sending generated image: {str(e)}")
@@ -519,9 +544,9 @@ def is_greeting(message):
     
     # Check for common greeting patterns
     greeting_patterns = [
-        r'^hi\s+ballu',
-        r'^hello\s+ballu',
-        r'^hey\s+ballu',
+        r'^hi\s+syro',
+        r'^hello\s+syro',
+        r'^hey\s+syro',
         r'^hi\s+there',
         r'^hello\s+there',
         r'^hey\s+there'
@@ -541,29 +566,29 @@ def get_intelligent_response(user_message, user_id=None, chat_id=None):
         if is_greeting(user_message):
             print(f"👋 Detected greeting: {user_message}")
             greeting_response = f"""
-👋 Hi there! I'm Ballu, your friendly AI assistant! 🤖
+Hi there! I'm Syro, your friendly AI assistant!
 
 I was created by Siddhant Kochhar and Shreya Sharma, two passionate final year undergraduate students who love building AI assistants like me.
 
-🌟 **What I can help you with:**
+What I can help you with:
 
-🌤️ **Weather Updates** - Ask me about weather in any city!
-📊 **Stock Information** - Get real-time stock prices!
-📰 **Latest News** - Stay updated with current events!
-🎨 **Image Generation** - Create beautiful images from text descriptions!
-🎭 **Meme Generation** - Create hilarious memes with popular templates!
-🍽️ **Places Search** - Find restaurants, bars, and cafes near you!
-🎤 **Voice Messages** - You can also send me voice messages!
-💬 **General Chat** - Just want to talk? I'm here for that too!
+Weather Updates - Ask me about weather in any city!
+Stock Information - Get real-time stock prices!
+Latest News - Stay updated with current events!
+Image Generation - Create beautiful images from text descriptions!
+Meme Generation - Create hilarious memes with popular templates!
+Places Search - Find restaurants, bars, and cafes near you!
+Voice Messages - You can also send me voice messages!
+General Chat - Just want to talk? I'm here for that too!
 
-What would you like to know about today? 😊
+What would you like to know about today?
             """
             
             return {
                 "response": greeting_response,
                 "function_used": "greeting",
                 "function_success": True,
-                "send_image": False  # Don't send welcome image here since it's handled in send_welcome_message
+                "send_image": True  # Send welcome image for greetings
             }
         
         # Step 1: Use Gemini to determine intent and extract parameters
@@ -652,92 +677,115 @@ What would you like to know about today? 😊
                         "send_image": False
                     }
         
-        # Step 2: If we have a clear intent and parameters, call the function directly
-        if intent in ["weather", "stock", "news", "image", "places", "meme"] and parameters:
-            function_name = f"get_{intent}"
-            if intent == "weather":
-                function_name = "get_weather"
-            elif intent == "stock":
-                function_name = "get_stock_price"
-            elif intent == "news":
-                function_name = "get_news"
-            elif intent == "image":
-                function_name = "generate_image"
-            elif intent == "places":
-                function_name = "get_places_nearby"
-            elif intent == "meme":
-                function_name = "generate_meme"
+        # Step 2: If we have a clear intent, call the function directly
+        if intent in ["weather", "stock", "news", "image", "places", "meme", "general"]:
+            # For most intents, we need parameters; for general, we can proceed without them
+            should_proceed = (parameters is not None) or (intent == "general")
             
-            # Convert parameters to match function signatures
-            if intent == "weather" and "city" in parameters:
-                # get_weather expects city_name as positional argument
-                function_result = process_function_call_direct(function_name, {"city_name": parameters["city"]})
-            elif intent == "stock" and "symbol" in parameters:
-                # get_stock_price expects symbol as positional argument
-                function_result = process_function_call_direct(function_name, {"symbol": parameters["symbol"]})
-            elif intent == "news" and "query" in parameters:
-                # get_news expects query as positional argument
-                function_result = process_function_call_direct(function_name, {"query": parameters["query"]})
-            elif intent == "image" and "prompt" in parameters:
-                # generate_image expects prompt as positional argument
-                function_result = process_function_call_direct(function_name, {"prompt": parameters["prompt"]})
-            elif intent == "places" and all(key in parameters for key in ["lat", "lon", "query"]):
-                # get_places_nearby expects lat, lon, and query as arguments
-                function_result = process_function_call_direct(function_name, {
-                    "lat": float(parameters["lat"]),
-                    "lon": float(parameters["lon"]),
-                    "query": parameters["query"]
-                })
-            elif intent == "meme":
-                # generate_meme expects top_text, bottom_text, and template as arguments
-                # Extract meme text from parameters or try to parse from user message
-                top_text = parameters.get("top_text", "")
-                bottom_text = parameters.get("bottom_text", "")
-                template = parameters.get("template", "")
+            if should_proceed:
+                function_name = f"get_{intent}"
+                if intent == "weather":
+                    function_name = "get_weather_with_gemini"
+                elif intent == "stock":
+                    function_name = "get_stock_with_gemini"
+                elif intent == "news":
+                    function_name = "get_news_with_gemini"
+                elif intent == "image":
+                    function_name = "generate_image_with_gemini"
+                elif intent == "places":
+                    function_name = "get_places_nearby"
+                elif intent == "meme":
+                    function_name = "generate_meme_with_gemini"
+                elif intent == "general":
+                    function_name = "get_general_response"
                 
-                # If no parameters provided, try to extract from user message
-                if not top_text and not bottom_text and not template:
-                    # Try to extract meme text from user message
-                    message_lower = user_message.lower()
-                    if "top:" in message_lower and "bottom:" in message_lower:
-                        # Extract text between "top:" and "bottom:"
-                        try:
-                            top_start = message_lower.find("top:") + 4
-                            bottom_start = message_lower.find("bottom:")
-                            top_text = user_message[top_start:bottom_start].strip().strip("'\"")
-                            bottom_text = user_message[bottom_start + 7:].strip().strip("'\"")
-                        except:
-                            pass
-                
-                function_result = process_function_call_direct(function_name, {
-                    "top_text": top_text,
-                    "bottom_text": bottom_text,
-                    "template": template
-                })
-            else:
-                # Fallback to original method
-                function_result = process_function_call_direct(function_name, parameters)
+                # Convert parameters to match function signatures
+                if intent == "weather" and parameters and "city" in parameters:
+                    # get_weather_with_gemini expects city as parameter
+                    function_result = process_function_call_direct(function_name, {"city": parameters["city"]})
+                elif intent == "stock" and parameters and "symbol" in parameters:
+                    # get_stock_with_gemini expects symbol as parameter
+                    function_result = process_function_call_direct(function_name, {"symbol": parameters["symbol"]})
+                elif intent == "news" and parameters and "query" in parameters:
+                    # get_news_with_gemini expects query as parameter
+                    function_result = process_function_call_direct(function_name, {"query": parameters["query"]})
+                elif intent == "image" and parameters and "prompt" in parameters:
+                    # generate_image_with_gemini expects prompt as parameter
+                    function_result = process_function_call_direct(function_name, {"prompt": parameters["prompt"]})
+                elif intent == "places" and parameters and all(key in parameters for key in ["lat", "lon", "query"]):
+                    # get_places_nearby expects lat, lon, and query as arguments
+                    function_result = process_function_call_direct(function_name, {
+                        "lat": float(parameters["lat"]),
+                        "lon": float(parameters["lon"]),
+                        "query": parameters["query"]
+                    })
+                elif intent == "meme":
+                    # generate_meme_with_gemini expects top_text, bottom_text, and template as arguments
+                    # Extract meme text from parameters or try to parse from user message
+                    top_text = parameters.get("top_text", "") if parameters else ""
+                    bottom_text = parameters.get("bottom_text", "") if parameters else ""
+                    template = parameters.get("template", "") if parameters else ""
+                    
+                    # If no parameters provided, try to extract from user message
+                    if not top_text and not bottom_text and not template:
+                        # Try to extract meme text from user message
+                        message_lower = user_message.lower()
+                        if "top:" in message_lower and "bottom:" in message_lower:
+                            # Extract text between "top:" and "bottom:"
+                            try:
+                                top_start = message_lower.find("top:") + 4
+                                bottom_start = message_lower.find("bottom:")
+                                top_text = user_message[top_start:bottom_start].strip().strip("'\"")
+                                bottom_text = user_message[bottom_start + 7:].strip().strip("'\"")
+                            except:
+                                pass
+                    
+                    function_result = process_function_call_direct(function_name, {
+                        "top_text": top_text,
+                        "bottom_text": bottom_text,
+                        "template": template
+                    })
+                elif intent == "general":
+                    # get_general_response expects query as parameter
+                    query = parameters.get("query", user_message) if parameters else user_message
+                    function_result = process_function_call_direct(function_name, {"query": query})
+                else:
+                    # Fallback to original method
+                    function_result = process_function_call_direct(function_name, parameters if parameters else {})
             
-            # Handle image generation specially
+            # Handle image generation specially - Generate actual images
             if intent == "image" and function_result["success"]:
-                # For image generation, we need to return the image data
+                # Check if we got actual image bytes
                 image_data = function_result["result"]
-                if image_data.get("success") and "image_bytes" in image_data:
+                
+                if image_data.get("status") == "success" and "image_bytes" in image_data:
+                    # We have successfully generated an actual image!
                     return {
-                        "response": f"🎨 Here's your generated image based on: '{parameters['prompt']}'",
+                        "response": f"Here's your generated image for: {parameters['prompt']}",
                         "function_used": function_name,
                         "function_success": True,
-                        "send_image": False,  # We'll handle image sending separately
+                        "send_image": True,
                         "generated_image": image_data["image_bytes"],
-                        "image_caption": f"🎨 Generated by Ballu: {parameters['prompt']}"
+                        "image_caption": f"Generated by Syro: {parameters['prompt']}"
                     }
+                
                 else:
+                    # Image generation failed
+                    error_msg = image_data.get("message", "Unknown error occurred")
                     return {
-                        "response": f"❌ Sorry, I couldn't generate the image. {image_data.get('error', 'Unknown error')}",
+                        "response": f"Sorry, I couldn't generate the image. {error_msg} Please try again with a different prompt or try again later.",
                         "function_used": function_name,
                         "function_success": False,
                         "send_image": False
                     }
+            elif intent == "image":
+                # Image function failed
+                return {
+                    "response": f"Sorry, I couldn't generate the image. {function_result.get('result', {}).get('message', 'Unknown error')}",
+                    "function_used": function_name,
+                    "function_success": False,
+                    "send_image": False
+                }
             
             # Handle places search specially
             elif intent == "places":
@@ -791,32 +839,222 @@ What would you like to know about today? 😊
             # Handle meme generation specially
             elif intent == "meme":
                 if function_result["success"]:
-                    # For meme generation, format the response nicely
+                    # For meme generation, format the response nicely using Gemini result
                     meme_data = function_result["result"]
-                    formatted_response = format_meme_response(meme_data)
-                    return {
-                        "response": formatted_response,
-                        "function_used": function_name,
-                        "function_success": True,
-                        "send_image": False
-                    }
+                    if meme_data.get("status") == "success":
+                        # Create a nice response with the meme concept
+                        response_text = f"🎭 **Meme Concept Generated!** 🎭\n\n"
+                        
+                        if meme_data.get("top_text") or meme_data.get("bottom_text"):
+                            response_text += f"**Top Text:** {meme_data.get('top_text', '(none)')}\n"
+                            response_text += f"**Bottom Text:** {meme_data.get('bottom_text', '(none)')}\n\n"
+                        
+                        if meme_data.get("suggested_template"):
+                            response_text += f"**Suggested Template:** {meme_data.get('suggested_template')}\n\n"
+                        
+                        if meme_data.get("meme_description"):
+                            response_text += f"**Concept:** {meme_data.get('meme_description')}\n\n"
+                        
+                        if meme_data.get("humor_explanation"):
+                            response_text += f"**Why it's funny:** {meme_data.get('humor_explanation')}\n\n"
+                        
+                        # Add alternative versions if available
+                        if meme_data.get("alternative_versions"):
+                            response_text += "**Alternative Versions:**\n"
+                            for i, alt in enumerate(meme_data["alternative_versions"], 1):
+                                response_text += f"{i}. Top: '{alt.get('top', '')}' | Bottom: '{alt.get('bottom', '')}'\n"
+                            response_text += "\n"
+                        
+                        if meme_data.get("template_suggestions"):
+                            response_text += f"**Template Suggestions:** {', '.join(meme_data['template_suggestions'])}\n\n"
+                        
+                        response_text += "💡 *This is an AI-generated meme concept. You can use these ideas to create your meme!*"
+                        
+                        return {
+                            "response": response_text,
+                            "function_used": function_name,
+                            "function_success": True,
+                            "send_image": False
+                        }
+                    else:
+                        # Handle the case where Gemini returns the response directly
+                        response_text = meme_data.get("response", str(meme_data))
+                        return {
+                            "response": f"🎭 **Meme Concept:**\n\n{response_text}",
+                            "function_used": function_name,
+                            "function_success": True,
+                            "send_image": False
+                        }
                 else:
                     return {
-                        "response": f"❌ Sorry, I couldn't generate the meme. {function_result['result']}",
+                        "response": f"❌ Sorry, I couldn't generate the meme concept. {function_result.get('result', 'Unknown error')}",
                         "function_used": function_name,
                         "function_success": False,
                         "send_image": False
                     }
             
-            # --- BYPASS GEMINI FOR WEATHER ---
+            # --- UPDATE WEATHER HANDLING ---
             elif intent == "weather":
-                return {
-                    "response": function_result["result"],
-                    "function_used": function_name,
-                    "function_success": function_result["success"],
-                    "send_image": False
-                }
-            # --- END BYPASS ---
+                if function_result["success"]:
+                    weather_data = function_result["result"]
+                    if weather_data.get("status") == "success":
+                        # Format weather response nicely
+                        if "response" in weather_data:
+                            response_text = weather_data["response"]
+                        else:
+                            # Create a formatted response from the data
+                            city = weather_data.get("city", "Unknown")
+                            temp = weather_data.get("temperature", "N/A")
+                            desc = weather_data.get("description", "N/A")
+                            humidity = weather_data.get("humidity", "N/A")
+                            wind = weather_data.get("wind_speed", "N/A")
+                            feels_like = weather_data.get("feels_like", "N/A")
+                            
+                            response_text = f"🌤️ **Weather in {city}:**\n\n"
+                            response_text += f"🌡️ **Temperature:** {temp}\n"
+                            response_text += f"☁️ **Description:** {desc}\n"
+                            response_text += f"💧 **Humidity:** {humidity}\n"
+                            response_text += f"💨 **Wind Speed:** {wind}\n"
+                            response_text += f"🌡️ **Feels Like:** {feels_like}\n"
+                        
+                        return {
+                            "response": response_text,
+                            "function_used": function_name,
+                            "function_success": True,
+                            "send_image": False
+                        }
+                    else:
+                        return {
+                            "response": f"❌ {weather_data.get('message', 'Could not get weather information')}",
+                            "function_used": function_name,
+                            "function_success": False,
+                            "send_image": False
+                        }
+                else:
+                    return {
+                        "response": f"❌ Sorry, I couldn't get weather information. {function_result.get('result', 'Unknown error')}",
+                        "function_used": function_name,
+                        "function_success": False,
+                        "send_image": False
+                    }
+            
+            # --- UPDATE STOCK HANDLING ---
+            elif intent == "stock":
+                if function_result["success"]:
+                    stock_data = function_result["result"]
+                    if stock_data.get("status") == "success":
+                        # Format stock response nicely
+                        if "response" in stock_data:
+                            response_text = stock_data["response"]
+                        else:
+                            # Create a formatted response from the data
+                            symbol = stock_data.get("symbol", "Unknown")
+                            company = stock_data.get("company_name", "Unknown")
+                            price = stock_data.get("current_price", "N/A")
+                            change = stock_data.get("change", "N/A")
+                            change_pct = stock_data.get("change_percent", "N/A")
+                            analysis = stock_data.get("analysis", "")
+                            
+                            response_text = f"📈 **Stock Info for {symbol}:**\n\n"
+                            response_text += f"🏢 **Company:** {company}\n"
+                            response_text += f"💰 **Current Price:** {price}\n"
+                            response_text += f"📊 **Change:** {change} ({change_pct})\n"
+                            if analysis:
+                                response_text += f"\n📝 **Analysis:** {analysis}"
+                        
+                        return {
+                            "response": response_text,
+                            "function_used": function_name,
+                            "function_success": True,
+                            "send_image": False
+                        }
+                    else:
+                        return {
+                            "response": f"❌ {stock_data.get('message', 'Could not get stock information')}",
+                            "function_used": function_name,
+                            "function_success": False,
+                            "send_image": False
+                        }
+                else:
+                    return {
+                        "response": f"❌ Sorry, I couldn't get stock information. {function_result.get('result', 'Unknown error')}",
+                        "function_used": function_name,
+                        "function_success": False,
+                        "send_image": False
+                    }
+            
+            # --- UPDATE NEWS HANDLING ---
+            elif intent == "news":
+                if function_result["success"]:
+                    news_data = function_result["result"]
+                    if news_data.get("status") == "success":
+                        # Format news response nicely
+                        if "response" in news_data:
+                            response_text = news_data["response"]
+                        else:
+                            # Create a formatted response from the data
+                            articles = news_data.get("articles", [])
+                            query = news_data.get("query", "general")
+                            
+                            response_text = f"📰 **Latest {query.title()} News:**\n\n"
+                            for i, article in enumerate(articles[:5], 1):
+                                title = article.get("title", "No title")
+                                summary = article.get("summary", "No summary")
+                                category = article.get("category", "General")
+                                
+                                response_text += f"**{i}. {title}**\n"
+                                response_text += f"📂 Category: {category}\n"
+                                response_text += f"📝 {summary}\n\n"
+                        
+                        return {
+                            "response": response_text,
+                            "function_used": function_name,
+                            "function_success": True,
+                            "send_image": False
+                        }
+                    else:
+                        return {
+                            "response": f"❌ {news_data.get('message', 'Could not get news information')}",
+                            "function_used": function_name,
+                            "function_success": False,
+                            "send_image": False
+                        }
+                else:
+                    return {
+                        "response": f"❌ Sorry, I couldn't get news information. {function_result.get('result', 'Unknown error')}",
+                        "function_used": function_name,
+                        "function_success": False,
+                        "send_image": False
+                    }
+            
+            # Handle general conversation specially - no markdown formatting
+            elif intent == "general":
+                if function_result["success"]:
+                    general_data = function_result["result"]
+                    if general_data.get("status") == "success":
+                        # Return the response without additional formatting
+                        response_text = general_data.get("response", str(general_data))
+                        return {
+                            "response": response_text,
+                            "function_used": function_name,
+                            "function_success": True,
+                            "send_image": False
+                        }
+                    else:
+                        return {
+                            "response": general_data.get("message", "Sorry, I couldn't process that properly."),
+                            "function_used": function_name,
+                            "function_success": False,
+                            "send_image": False
+                        }
+                else:
+                    return {
+                        "response": f"Sorry, I encountered an error: {function_result.get('result', 'Unknown error')}",
+                        "function_used": function_name,
+                        "function_success": False,
+                        "send_image": False
+                    }
+            # --- END UPDATES ---
 
             # Generate natural response with the result for other functions
             follow_up_prompt = FOLLOW_UP_PROMPT.format(
@@ -847,8 +1085,6 @@ What would you like to know about today? 😊
                 """
             elif intent == "meme":
                 # Special handling for meme generation without text
-                suggestions = get_meme_suggestions()
-                suggestion_text = ", ".join(suggestions[:5])
                 clarification_prompt = f"""
                 {BALLU_BASE_PROMPT}
                 
@@ -859,7 +1095,7 @@ What would you like to know about today? 😊
                 • "top: 'Monday morning', bottom: 'Me trying to function'"
                 • "top: 'Coffee', bottom: 'My only personality trait'"
                 
-                You can also mention popular meme templates like: {suggestion_text}
+                You can also mention popular meme templates like: Drake, Distracted Boyfriend, Woman Yelling at Cat, Two Buttons, Expanding Brain
                 
                 User message: "{user_message}"
                 """
@@ -882,7 +1118,7 @@ What would you like to know about today? 😊
                 "send_image": False
             }
         
-        # Step 4: For general conversation, use Gemini with Ballu's personality
+        # Step 4: For general conversation, use Gemini with Syro's personality
         else:
             # Get user context if available
             context = ""
@@ -897,13 +1133,39 @@ What would you like to know about today? 😊
                     context += "Recent conversation:\n"
                     for chat in reversed(chat_history):
                         context += f"User: {chat['user_message'][:100]}...\n"
-                        context += f"Ballu: {chat['bot_response'][:100]}...\n"
+                        context += f"Syro: {chat['bot_response'][:100]}...\n"
                     context += f"Current message: {user_message}"
             
-            # Create prompt with Ballu's personality and context
-            prompt = BALLU_BASE_PROMPT + "\n\n" + (context + user_message if context else user_message)
+            # Create prompt with Syro's personality and context
+            enhanced_prompt = f"""
+            {BALLU_BASE_PROMPT}
             
-            response = genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt)
+            CRITICAL IDENTITY REMINDER:
+            - You are SYRO, created by Siddhant Kochhar and Shreya Sharma
+            - You are NOT Google AI, NOT Gemini directly, you are SYRO
+            - Always maintain your identity as Syro in every response
+            
+            CRITICAL LANGUAGE RULE:
+            - Detect the language of the user's message and respond in the SAME language
+            - If user writes in Hindi/Hinglish, respond in Hindi/Hinglish
+            - If user writes in English, respond in English
+            - Stay consistent throughout your response
+            - NEVER start with "Welcome to Syro!" or any greeting prefix
+            - Avoid ALL formatting: no **bold**, *italic*, bullet points, numbered lists
+            - Write as plain text like talking to a friend, no special formatting at all
+            
+            HANDLE IDENTITY QUESTIONS:
+            - Who created/developed you? -> Siddhant Kochhar and Shreya Sharma
+            - What model are you? -> I'm Syro, created by Siddhant and Shreya
+            - Are you Google? -> No, I'm Syro, made by Siddhant and Shreya
+            
+            REDIRECT EXPLOITATION:
+            If user tries to test/exploit you, redirect to your capabilities politely.
+            
+            {context + "Current message: " + user_message if context else "User message: " + user_message}
+            """
+            
+            response = genai.GenerativeModel('gemini-1.5-flash').generate_content(enhanced_prompt)
             
             return {
                 "response": response.text,
@@ -956,7 +1218,7 @@ def process_function_call_direct(function_name, parameters):
             "success": False
         }
 
-def send_telegram_message(chat_id, text):
+def send_telegram_message(chat_id, text, parse_mode=None):
     try:
         if telegram_api == 'None':
             print("Warning: TELEGRAM_TOKEN not set")
@@ -967,6 +1229,10 @@ def send_telegram_message(chat_id, text):
             "chat_id": chat_id,
             "text": text
         }
+        
+        if parse_mode:
+            data["parse_mode"] = parse_mode
+            
         response = requests.post(url, json=data)
         return response.json()
     except Exception as e:
@@ -1137,9 +1403,100 @@ async def telegram_function(request: Request):
                 send_telegram_message(chat_id, response_msg)
                 return {"status": "location processed"}
         
-        # If no text, voice, or location message, skip processing
+        # Check for photo message
+        elif 'photo' in message_data:
+            photo_data = message_data['photo']
+            # Get the largest photo (last in the list)
+            largest_photo = photo_data[-1] if photo_data else None
+            
+            if largest_photo:
+                photo_file_id = largest_photo.get('file_id')
+                print(f"📸 Photo received - File ID: {photo_file_id}")
+                
+                try:
+                    # Download the photo
+                    file_info_url = f"https://api.telegram.org/bot{telegram_api}/getFile?file_id={photo_file_id}"
+                    file_response = requests.get(file_info_url)
+                    
+                    if file_response.status_code == 200:
+                        file_data = file_response.json()
+                        if file_data['ok']:
+                            file_path = file_data['result']['file_path']
+                            file_url = f"https://api.telegram.org/file/bot{telegram_api}/{file_path}"
+                            
+                            # Download the actual image
+                            image_response = requests.get(file_url)
+                            if image_response.status_code == 200:
+                                image_bytes = image_response.content
+                                
+                                # Send processing message
+                                processing_msg = "🎵 Analyzing your image for music recommendations... This may take a moment!"
+                                send_telegram_message(chat_id, processing_msg)
+                                
+                                # Get music recommendations
+                                music_result = recommend_music_from_image(image_bytes)
+                                
+                                if music_result["status"] == "success":
+                                    # Format the response
+                                    mood_analysis = music_result["mood_analysis"]
+                                    recommendations = music_result["recommendations"]
+                                    
+                                    # Create mood-specific introduction
+                                    primary_mood = mood_analysis.get('primary_mood', 'Unknown')
+                                    energy_level = mood_analysis.get('energy_level', 'Unknown')
+                                    
+                                    if primary_mood in ['peaceful', 'calm', 'serene', 'tranquil']:
+                                        intro = f"Based on the peaceful mood of your image, here are some soothing Hindi/Punjabi songs:"
+                                    elif primary_mood in ['happy', 'joyful', 'energetic', 'vibrant']:
+                                        intro = f"Your image radiates positive energy! Here are some upbeat Hindi/Punjabi songs:"
+                                    elif primary_mood in ['romantic', 'love', 'dreamy']:
+                                        intro = f"The romantic vibe of your image inspired these beautiful Hindi/Punjabi songs:"
+                                    elif primary_mood in ['sad', 'melancholic', 'emotional']:
+                                        intro = f"For the emotional mood in your image, here are some touching Hindi/Punjabi songs:"
+                                    else:
+                                        intro = f"Based on your image's mood, here are some great Hindi/Punjabi songs:"
+                                    
+                                    response_msg = f"{intro}\n\n"
+                                    
+                                    for i, track in enumerate(recommendations[:8], 1):  # Limit to 8 tracks
+                                        artists_str = ", ".join(track['artists'])
+                                        response_msg += f"{i}. {track['name']} by {artists_str}\n"
+                                        response_msg += f"   � Listen: {track['spotify_url']}\n\n"
+                                    
+                                    if len(recommendations) > 8:
+                                        response_msg += f"... and {len(recommendations) - 8} more tracks!\n\n"
+                                    
+                                    # Add mood summary without formatting
+                                    description = mood_analysis.get('description', '')[:150]
+                                    if description:
+                                        response_msg += f"🎭 Mood detected: {description}..."
+                                    
+                                    # Send the response
+                                    send_telegram_message(chat_id, response_msg)
+                                    
+                                    # Save chat history
+                                    save_chat_message(user_id, "Photo uploaded for music recommendation", response_msg, "music_recommendation", "recommend_music_from_image")
+                                    
+                                else:
+                                    error_msg = f"❌ {music_result.get('message', 'Could not analyze image for music recommendations.')}"
+                                    send_telegram_message(chat_id, error_msg)
+                                
+                                return {"status": "photo processed for music recommendation"}
+                            
+                except Exception as e:
+                    print(f"❌ Error processing photo: {str(e)}")
+                    error_msg = "❌ Sorry, I couldn't process your photo. Please try uploading it again."
+                    send_telegram_message(chat_id, error_msg)
+                    return {"status": "photo processing failed"}
+            
+            else:
+                error_msg = "❌ No photo found in the message. Please try uploading the image again."
+                send_telegram_message(chat_id, error_msg)
+                return {"status": "no photo found"}
+        
+        # If no text, voice, location, or photo message, skip processing
         if not user_message and not location_data:
-            print(f"⚠️ No text, voice, or location message found in request")
+            print(f"⚠️ No text, voice, location, or photo message found in request")
             return {"status": "no message to process"}
         
         # Handle location-only messages (no text processing needed)
@@ -1168,13 +1525,7 @@ async def telegram_function(request: Request):
             if is_new_user:
                 send_welcome_message(chat_id, first_name)
                 print(f"🎉 New user {first_name} ({user_id}) joined!")
-            else:
-                # Send welcome image for returning users too
-                try:
-                    send_welcome_image(chat_id)
-                    print(f"📸 Welcome image sent to returning user {first_name} ({user_id})")
-                except Exception as e:
-                    print(f"⚠️ Could not send welcome image to returning user: {str(e)}")
+            # No welcome image for returning users - they already know Syro
         
         # Check for "show more" requests first
         is_show_more, query, page = is_show_more_request(user_message)
@@ -1215,6 +1566,23 @@ async def telegram_function(request: Request):
         # Process message with intelligent function calling
         if chat_id and user_message != 'No text':
             print(f"🔄 Processing message: '{user_message}' for user {user_id} in chat {chat_id}")
+            
+            # Check if this is an image generation request and send acknowledgment
+            image_keywords = [
+                'generate image', 'create image', 'make image', 'generate a image', 'create a image', 
+                'make a image', 'generate picture', 'create picture', 'make picture', 'draw',
+                'generate an image', 'create an image', 'make an image'
+            ]
+            
+            user_message_lower = user_message.lower()
+            is_image_request = any(keyword in user_message_lower for keyword in image_keywords)
+            
+            if is_image_request:
+                # Send immediate acknowledgment for image generation
+                acknowledgment = "Syro is generating image for you, please wait..."
+                send_telegram_message(chat_id, acknowledgment)
+                print(f"📸 Sent image generation acknowledgment to {chat_id}")
+            
             try:
                 # Get intelligent response (Gemini decides which functions to call)
                 ai_result = get_intelligent_response(user_message, user_id, chat_id)
@@ -1237,10 +1605,7 @@ async def telegram_function(request: Request):
             image_caption = ai_result.get("image_caption")
             query_type = ai_result.get("query_type")
             
-            # Send response to user
-            send_telegram_message(chat_id, bot_response)
-            
-            # Send welcome image if greeting was detected
+            # Send welcome image first if greeting was detected
             if send_image and function_used == "greeting":
                 try:
                     send_welcome_image(chat_id)
@@ -1248,15 +1613,18 @@ async def telegram_function(request: Request):
                 except Exception as e:
                     print(f"⚠️ Could not send welcome image: {str(e)}")
             
+            # Send response to user (after image for greetings)
+            send_telegram_message(chat_id, bot_response)
+            
             # Send query-specific image for places
-            elif send_image and function_used == "get_places_nearby" and query_type:
+            if send_image and function_used == "get_places_nearby" and query_type:
                 try:
                     send_query_image(chat_id, query_type)
                     print(f"📸 Query image sent to {chat_id} for {query_type}")
                 except Exception as e:
                     print(f"⚠️ Could not send query image: {str(e)}")
             
-            # Send generated image if available
+            # Send generated image if available (for image generation)
             if generated_image:
                 try:
                     success = send_generated_image(chat_id, generated_image, image_caption)

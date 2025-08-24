@@ -13,7 +13,7 @@ redis_available = False
 redis_client = None
 
 try:
-    # Try Upstash Redis first
+    # Use Upstash Redis only
     upstash_url = os.getenv('UPSTASH_REDIS_REST_URL')
     upstash_token = os.getenv('UPSTASH_REDIS_REST_TOKEN')
     
@@ -25,12 +25,9 @@ try:
         redis_available = True
         print("✅ Upstash Redis connected successfully!")
     else:
-        # Fallback to local Redis
-        import redis
-        redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
-        redis_client.ping()
-        redis_available = True
-        print("✅ Local Redis connected successfully!")
+        print("⚠️ Upstash Redis credentials not found in environment variables")
+        redis_available = False
+        redis_client = None
         
 except Exception as e:
     print(f"⚠️ Redis not available: {str(e)}")

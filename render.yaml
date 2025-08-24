@@ -1,11 +1,13 @@
 services:
   - type: web
     name: syro-telegram-bot
-    env: docker                # Use Docker, not python, since you have a Dockerfile
+    env: python
     region: oregon
     plan: free
     branch: siddhant_dev
-    dockerfilePath: ./Dockerfile  # Points to your Dockerfile
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    runtime: python-3.11
     envVars:
       - key: PORT
         value: 8000

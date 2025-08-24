@@ -1,4 +1,4 @@
-# Use Python 3.9 slim image for better compatibility
+# Use Python 3.11 slim image for better compatibility
 FROM python:3.11-slim
 
 

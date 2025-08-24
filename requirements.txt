@@ -4,7 +4,7 @@ python-telegram-bot
 requests 
 python-dotenv
 google-generativeai
-pymongo
+pymongo[srv]>=4.0
 redis
 openai-whisper
 Pillow

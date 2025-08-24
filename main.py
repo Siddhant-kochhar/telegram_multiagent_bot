@@ -39,7 +39,11 @@ gemini_api = os.getenv('GEMINI_API_KEY','None')
 # MongoDB connection
 MONGODB_URL = os.getenv('MONGODB_URL', 'mongodb://localhost:27017/telegram_bot_db')
 try:
-    client = MongoClient(MONGODB_URL)
+    print("🔗 Attempting to connect to MongoDB...")
+    client = MongoClient(MONGODB_URL, 
+                        connectTimeoutMS=10000,
+                        socketTimeoutMS=10000,
+                        serverSelectionTimeoutMS=10000)
     db = client.telegram_bot_db
     
     # Collections
@@ -47,13 +51,19 @@ try:
     chat_history_collection = db.chat_history
     processed_messages_collection = db.processed_messages  # For deduplication
     
-    # Test connection
+    # Test connection with timeout
     client.admin.command('ping')
     print("✅ MongoDB connected successfully!")
+    print(f"📍 Connected to: {MONGODB_URL[:50]}...")
 except Exception as e:
     print(f"❌ MongoDB connection failed: {str(e)}")
-    print("Bot will continue without database functionality")
+    print("⚠️  Bot will continue without database functionality")
+    print("💡 Tip: Check your network connection and MongoDB Atlas whitelist")
     db = None
+    client = None
+    users_collection = None
+    chat_history_collection = None
+    processed_messages_collection = None
 
 # Configure Gemini with Function Calling
 genai.configure(api_key=gemini_api)
@@ -407,6 +417,9 @@ Voice Messages - You can also send me voice messages!
 
 General Chat - Just want to talk? I'm here for that too!
 
+Feedback - Help me improve! Use /feedback to share your thoughts and suggestions
+   Your feedback helps make Syro better for everyone
+
 I was created by Siddhant Kochhar and Shreya Sharma, two passionate final year undergraduate students who love building AI assistants like me.
 
 I'm still learning and growing, so feel free to ask me anything! What would you like to know about today?
@@ -580,6 +593,8 @@ Meme Generation - Create hilarious memes with popular templates!
 Places Search - Find restaurants, bars, and cafes near you!
 Voice Messages - You can also send me voice messages!
 General Chat - Just want to talk? I'm here for that too!
+
+Feedback - Help me improve! Use /feedback to share your thoughts and suggestions
 
 What would you like to know about today?
             """
@@ -1562,6 +1577,32 @@ async def telegram_function(request: Request):
                 error_response = "❌ I don't have your location saved. Please share your location first!"
                 send_telegram_message(chat_id, error_response)
                 return {"status": "no location for show more"}
+        
+        # Check for feedback command
+        if user_message and user_message.strip().lower() == '/feedback':
+            feedback_message = """
+🌟 Help me improve! 🌟
+
+I'd love to hear your thoughts and suggestions about my features and performance. Your feedback helps make Syro better for everyone!
+
+📝 Please fill out this quick feedback form:
+https://forms.gle/WULcE9zjGPvypaXz6
+
+Thank you for helping me grow and become a better AI assistant! 💙
+
+What would you like me to help you with today?
+            """
+            send_telegram_message(chat_id, feedback_message)
+            
+            # Save feedback command to chat history
+            if user_id:
+                save_chat_message(user_id, user_message, feedback_message, "feedback", "feedback_form")
+            
+            # Mark message as processed
+            if message_id:
+                mark_message_processed(message_id)
+            
+            return {"status": "feedback form sent"}
         
         # Process message with intelligent function calling
         if chat_id and user_message != 'No text':

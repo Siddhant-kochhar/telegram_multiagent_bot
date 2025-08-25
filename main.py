@@ -6,282 +6,188 @@ import io
 import re
 import traceback
 from dotenv import load_dotenv
-
-print("🚀 Starting Syro Telegram Bot...")
-print("📁 Loading environment variables...")
-
-try:
-    import google.generativeai as genai
-    print("✅ Google Generative AI imported successfully!")
-except Exception as e:
-    print(f"❌ Error importing Google Generative AI: {str(e)}")
-    genai = None
-
-try:
-    from pymongo import MongoClient
-    print("✅ MongoDB client imported successfully!")
-except Exception as e:
-    print(f"❌ Error importing MongoDB client: {str(e)}")
-    # Create dummy MongoClient class
-    class MongoClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        def __getitem__(self, key):
-            return type('MockDB', (), {'__getitem__': lambda self, k: type('MockCollection', (), {'insert_one': lambda *a: None, 'find': lambda *a: [], 'find_one': lambda *a: None, 'update_one': lambda *a: None})()})()
-
 from datetime import datetime
 import json
 from typing import Dict, Any
 
-try:
-    from utils.gemini_handler import (
-        get_weather_with_gemini,
-        get_stock_with_gemini, 
-        get_news_with_gemini,
-        generate_image_with_gemini,
-        generate_meme_with_gemini,
-        get_general_response,
-        recommend_music_from_image
-    )
-    print("✅ Gemini handlers imported successfully!")
-except Exception as e:
-    print(f"❌ Error importing gemini handlers: {str(e)}")
-    # Create dummy functions to prevent crashes
-    def get_weather_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
-    def get_stock_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
-    def get_news_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
-    def generate_image_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
-    def generate_meme_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
-    def get_general_response(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
-    def recommend_music_from_image(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+# Load environment variables first
+load_dotenv()
 
-try:
-    from utils.get_places import get_places_nearby, get_user_location_from_telegram, format_places_response, get_places_with_pagination
-    print("✅ Places utilities imported successfully!")
-except Exception as e:
-    print(f"❌ Error importing places utilities: {str(e)}")
-    # Create dummy functions
-    def get_places_nearby(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
-    def get_user_location_from_telegram(*args, **kwargs): return None
-    def format_places_response(*args, **kwargs): return "Places service not available"
-    def get_places_with_pagination(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+# Global variables for modules and connections
+genai = None
+MongoClient = None
+model = None
+db = None
+client = None
+users_collection = None
+chat_history_collection = None
+processed_messages_collection = None
 
-try:
-    from utils.voice_processor import process_voice_message
-    print("✅ Voice processor imported successfully!")
-except Exception as e:
-    print(f"❌ Error importing voice processor: {str(e)}")
-    def process_voice_message(*args, **kwargs): return {"success": False, "error": "Voice processor not available"}
+# Import functions (these will be set during startup)
+get_weather_with_gemini = None
+get_stock_with_gemini = None
+get_news_with_gemini = None
+generate_image_with_gemini = None
+generate_meme_with_gemini = None
+get_general_response = None
+recommend_music_from_image = None
+get_places_nearby = None
+get_user_location_from_telegram = None
+format_places_response = None
+get_places_with_pagination = None
+process_voice_message = None
+BALLU_BASE_PROMPT = ""
+FUNCTION_CALLING_PROMPT = ""
+FOLLOW_UP_PROMPT = ""
+get_intent_and_parameters_with_gemini = None
 
-try:
-    from prompts.ballu_prompts import (
-        BALLU_BASE_PROMPT, 
-        FUNCTION_CALLING_PROMPT, 
-        FOLLOW_UP_PROMPT,
-        get_intent_and_parameters_with_gemini
-    )
-    print("✅ Prompts imported successfully!")
-except Exception as e:
-    print(f"❌ Error importing prompts: {str(e)}")
-    # Create dummy constants and functions
-    BALLU_BASE_PROMPT = "You are Syro, an AI assistant."
-    FUNCTION_CALLING_PROMPT = ""
-    FOLLOW_UP_PROMPT = ""
-    def get_intent_and_parameters_with_gemini(*args, **kwargs): return None, None
-
-load_dotenv()  # take environment variables
-
-# API keys  
-telegram_api = os.getenv('TELEGRAM_TOKEN','None')
-gemini_api = os.getenv('GEMINI_API_KEY','None')
-
-# MongoDB connection
-MONGODB_URL = os.getenv('MONGODB_URL', 'mongodb://localhost:27017/telegram_bot_db')
-try:
-    print("🔗 Attempting to connect to MongoDB...")
-    client = MongoClient(MONGODB_URL, 
-                        connectTimeoutMS=10000,
-                        socketTimeoutMS=10000,
-                        serverSelectionTimeoutMS=10000)
-    db = client.telegram_bot_db
-    
-    # Collections
-    users_collection = db.users
-    chat_history_collection = db.chat_history
-    processed_messages_collection = db.processed_messages  # For deduplication
-    
-    # Test connection with timeout
-    client.admin.command('ping')
-    print("✅ MongoDB connected successfully!")
-    print(f"📍 Connected to: {MONGODB_URL[:50]}...")
-except Exception as e:
-    print(f"❌ MongoDB connection failed: {str(e)}")
-    print("⚠️  Bot will continue without database functionality")
-    print("💡 Tip: Check your network connection and MongoDB Atlas whitelist")
-    db = None
-    client = None
-    users_collection = None
-    chat_history_collection = None
-    processed_messages_collection = None
-
-# Configure Gemini with Function Calling
-if genai:
-    try:
-        genai.configure(api_key=gemini_api)
-        print("✅ Gemini API configured successfully!")
-        
-        try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            print("✅ Gemini model created successfully!")
-        except Exception as e:
-            print(f"❌ Error creating Gemini model: {str(e)}")
-            model = None
-            
-    except Exception as e:
-        print(f"❌ Error configuring Gemini API: {str(e)}")
-        model = None
-else:
-    print("⚠️ Gemini not available - API will use fallback responses")
-    model = None
-
-# Define function schemas for Gemini - commented out for now due to version compatibility
-# function_declarations = [
-#     {
-#         "name": "get_weather_with_gemini",
-#         "description": "Get current weather information for a specific city using Gemini AI",
-#         "parameters": {
-#             "type": "object",
-#             "properties": {
-#                 "city": {
-#                     "type": "string",
-#                     "description": "The city name to get weather for (e.g., 'Mumbai', 'New York', 'London')"
-#                 }
-#             },
-#             "required": ["city"]
-#         }
-#     },
-#     {
-#         "name": "get_stock_with_gemini",
-#         "description": "Get current stock price and information for a specific stock symbol using Gemini AI",
-#         "parameters": {
-#             "type": "object",
-#             "properties": {
-#                 "symbol": {
-#                     "type": "string",
-#                     "description": "Stock symbol (e.g., 'AAPL', 'GOOGL', 'TSLA', 'RELIANCE.NS' for Indian stocks)"
-#                 }
-#             },
-#             "required": ["symbol"]
-#         }
-#     },
-#     {
-#         "name": "get_news_with_gemini",
-#         "description": "Get latest news articles using Gemini AI. Can get general news or search for specific topics",
-#         "parameters": {
-#             "type": "object",
-#             "properties": {
-#                 "query": {
-#                     "type": "string",
-#                     "description": "News search query. Use 'general' for latest news, or specific topics like 'technology', 'sports', 'politics'"
-#                 }
-#             },
-#             "required": ["query"]
-#         }
-#     },
-#     {
-#         "name": "generate_image_with_gemini",
-#         "description": "Generate a detailed image description based on a text prompt using Gemini AI",
-#         "parameters": {
-#             "type": "object",
-#             "properties": {
-#                 "prompt": {
-#                     "type": "string",
-#                     "description": "The text description of the image you want to generate (e.g., 'a beautiful sunset over mountains', 'a cute cat playing with a ball')"
-#                 }
-#             },
-#             "required": ["prompt"]
-#         }
-#     },
-#     {
-#         "name": "get_places_nearby",
-#         "description": "Find restaurants, bars, cafes, and other places near a specific location",
-#         "parameters": {
-#             "type": "object",
-#             "properties": {
-#                 "lat": {
-#                     "type": "number",
-#                     "description": "Latitude coordinate of the location"
-#                 },
-#                 "lon": {
-#                     "type": "number",
-#                     "description": "Longitude coordinate of the location"
-#                 },
-#                 "query": {
-#                     "type": "string",
-#                     "description": "Type of places to search for (e.g., 'restaurants', 'pubs', 'cafes', 'bars')"
-#                 }
-#             },
-#             "required": ["lat", "lon", "query"]
-#         }
-#     },
-#     {
-#         "name": "generate_meme_with_gemini",
-#         "description": "Generate a creative meme concept using Gemini AI",
-#         "parameters": {
-#             "type": "object",
-#             "properties": {
-#                 "top_text": {
-#                     "type": "string",
-#                     "description": "Text for the top of the meme (optional)"
-#                 },
-#                 "bottom_text": {
-#                     "type": "string",
-#                     "description": "Text for the bottom of the meme (optional)"
-#                 },
-#                 "template": {
-#                     "type": "string",
-#                     "description": "Specific meme template name (optional, will use random if not specified)"
-#                 }
-#             },
-#             "required": []
-#         }
-#     },
-#     {
-#         "name": "get_general_response",
-#         "description": "Get a general response for any query using Gemini AI",
-#         "parameters": {
-#             "type": "object",
-#             "properties": {
-#                 "query": {
-#                     "type": "string",
-#                     "description": "Any general question or query"
-#                 }
-#             },
-#             "required": ["query"]
-#         }
-#     },
-#     {
-#         "name": "recommend_music_from_image",
-#         "description": "Analyze the mood of an uploaded image and recommend matching music from Spotify",
-#         "parameters": {
-#             "type": "object",
-#             "properties": {
-#                 "image_description": {
-#                     "type": "string",
-#                     "description": "Description of the image to analyze for mood-based music recommendations"
-#                 }
-#             },
-#             "required": ["image_description"]
-#         }
-#     }
-# ]
-
-# --- Move FastAPI app definition here ---
+# Create FastAPI app
 app = FastAPI(title="Syro - Intelligent Telegram Bot", version="1.0.0")
 
-print("🎉 FastAPI app created successfully!")
-print("🔧 All imports and configurations loaded!")
-print("🚀 Syro Telegram Bot is ready to serve requests!")
+@app.on_event("startup")
+async def startup_event():
+    """Initialize all services when the app starts"""
+    global genai, MongoClient, model, db, client, users_collection, chat_history_collection, processed_messages_collection
+    global get_weather_with_gemini, get_stock_with_gemini, get_news_with_gemini, generate_image_with_gemini
+    global generate_meme_with_gemini, get_general_response, recommend_music_from_image
+    global get_places_nearby, get_user_location_from_telegram, format_places_response, get_places_with_pagination
+    global process_voice_message, BALLU_BASE_PROMPT, FUNCTION_CALLING_PROMPT, FOLLOW_UP_PROMPT
+    global get_intent_and_parameters_with_gemini
+    
+    print("🚀 Starting Syro Telegram Bot...")
+    print("📁 Loading environment variables...")
+
+    try:
+        import google.generativeai as genai
+        print("✅ Google Generative AI imported successfully!")
+    except Exception as e:
+        print(f"❌ Error importing Google Generative AI: {str(e)}")
+        genai = None
+
+    try:
+        from pymongo import MongoClient
+        print("✅ MongoDB client imported successfully!")
+    except Exception as e:
+        print(f"❌ Error importing MongoDB client: {str(e)}")
+        # Create dummy MongoClient class
+        class MongoClient:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __getitem__(self, key):
+                return type('MockDB', (), {'__getitem__': lambda self, k: type('MockCollection', (), {'insert_one': lambda *a: None, 'find': lambda *a: [], 'find_one': lambda *a: None, 'update_one': lambda *a: None})()})()
+
+    try:
+        from utils.gemini_handler import (
+            get_weather_with_gemini,
+            get_stock_with_gemini, 
+            get_news_with_gemini,
+            generate_image_with_gemini,
+            generate_meme_with_gemini,
+            get_general_response,
+            recommend_music_from_image
+        )
+        print("✅ Gemini handlers imported successfully!")
+    except Exception as e:
+        print(f"❌ Error importing gemini handlers: {str(e)}")
+        # Create dummy functions to prevent crashes
+        def get_weather_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+        def get_stock_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+        def get_news_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+        def generate_image_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+        def generate_meme_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+        def get_general_response(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+        def recommend_music_from_image(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+
+    try:
+        from utils.get_places import get_places_nearby, get_user_location_from_telegram, format_places_response, get_places_with_pagination
+        print("✅ Places utilities imported successfully!")
+    except Exception as e:
+        print(f"❌ Error importing places utilities: {str(e)}")
+        # Create dummy functions
+        def get_places_nearby(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+        def get_user_location_from_telegram(*args, **kwargs): return None
+        def format_places_response(*args, **kwargs): return "Places service not available"
+        def get_places_with_pagination(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+
+    try:
+        from utils.voice_processor import process_voice_message
+        print("✅ Voice processor imported successfully!")
+    except Exception as e:
+        print(f"❌ Error importing voice processor: {str(e)}")
+        def process_voice_message(*args, **kwargs): return {"success": False, "error": "Voice processor not available"}
+
+    try:
+        from prompts.ballu_prompts import (
+            BALLU_BASE_PROMPT, 
+            FUNCTION_CALLING_PROMPT, 
+            FOLLOW_UP_PROMPT,
+            get_intent_and_parameters_with_gemini
+        )
+        print("✅ Prompts imported successfully!")
+    except Exception as e:
+        print(f"❌ Error importing prompts: {str(e)}")
+        # Create dummy constants and functions
+        BALLU_BASE_PROMPT = "You are Syro, an AI assistant."
+        FUNCTION_CALLING_PROMPT = ""
+        FOLLOW_UP_PROMPT = ""
+        def get_intent_and_parameters_with_gemini(*args, **kwargs): return None, None
+
+    # API keys  
+    telegram_api = os.getenv('TELEGRAM_TOKEN','None')
+    gemini_api = os.getenv('GEMINI_API_KEY','None')
+
+    # MongoDB connection
+    MONGODB_URL = os.getenv('MONGODB_URL', 'mongodb://localhost:27017/telegram_bot_db')
+    try:
+        print("🔗 Attempting to connect to MongoDB...")
+        client = MongoClient(MONGODB_URL, 
+                            connectTimeoutMS=10000,
+                            socketTimeoutMS=10000,
+                            serverSelectionTimeoutMS=10000)
+        db = client.telegram_bot_db
+        
+        # Collections
+        users_collection = db.users
+        chat_history_collection = db.chat_history
+        processed_messages_collection = db.processed_messages  # For deduplication
+        
+        # Test connection with timeout
+        client.admin.command('ping')
+        print("✅ MongoDB connected successfully!")
+        print(f"📍 Connected to: {MONGODB_URL[:50]}...")
+    except Exception as e:
+        print(f"❌ MongoDB connection failed: {str(e)}")
+        print("⚠️  Bot will continue without database functionality")
+        print("💡 Tip: Check your network connection and MongoDB Atlas whitelist")
+        db = None
+        client = None
+        users_collection = None
+        chat_history_collection = None
+        processed_messages_collection = None
+
+    # Configure Gemini with Function Calling
+    if genai:
+        try:
+            genai.configure(api_key=gemini_api)
+            print("✅ Gemini API configured successfully!")
+            
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                print("✅ Gemini model created successfully!")
+            except Exception as e:
+                print(f"❌ Error creating Gemini model: {str(e)}")
+                model = None
+                
+        except Exception as e:
+            print(f"❌ Error configuring Gemini API: {str(e)}")
+            model = None
+    else:
+        print("⚠️ Gemini not available - API will use fallback responses")
+        model = None
+
+    print("🎉 FastAPI app startup complete!")
+    print("🔧 All imports and configurations loaded!")
+    print("🚀 Syro Telegram Bot is ready to serve requests!")
 
 # Health check endpoint for Render
 @app.get("/health")

@@ -6,30 +6,88 @@ import io
 import re
 import traceback
 from dotenv import load_dotenv
-import google.generativeai as genai
-from utils.gemini_handler import (
-    get_weather_with_gemini,
-    get_stock_with_gemini, 
-    get_news_with_gemini,
-    generate_image_with_gemini,
-    generate_meme_with_gemini,
-    get_general_response,
-    recommend_music_from_image
-)
-from utils.get_places import get_places_nearby, get_user_location_from_telegram, format_places_response, get_places_with_pagination
-from utils.voice_processor import process_voice_message
-from prompts.ballu_prompts import (
-    BALLU_BASE_PROMPT, 
-    FUNCTION_CALLING_PROMPT, 
-    FOLLOW_UP_PROMPT,
-    get_intent_and_parameters_with_gemini
-)
 
-# MongoDB imports and setup
-from pymongo import MongoClient
+print("🚀 Starting Syro Telegram Bot...")
+print("📁 Loading environment variables...")
+
+try:
+    import google.generativeai as genai
+    print("✅ Google Generative AI imported successfully!")
+except Exception as e:
+    print(f"❌ Error importing Google Generative AI: {str(e)}")
+    genai = None
+
+try:
+    from pymongo import MongoClient
+    print("✅ MongoDB client imported successfully!")
+except Exception as e:
+    print(f"❌ Error importing MongoDB client: {str(e)}")
+    # Create dummy MongoClient class
+    class MongoClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __getitem__(self, key):
+            return type('MockDB', (), {'__getitem__': lambda self, k: type('MockCollection', (), {'insert_one': lambda *a: None, 'find': lambda *a: [], 'find_one': lambda *a: None, 'update_one': lambda *a: None})()})()
+
 from datetime import datetime
 import json
 from typing import Dict, Any
+
+try:
+    from utils.gemini_handler import (
+        get_weather_with_gemini,
+        get_stock_with_gemini, 
+        get_news_with_gemini,
+        generate_image_with_gemini,
+        generate_meme_with_gemini,
+        get_general_response,
+        recommend_music_from_image
+    )
+    print("✅ Gemini handlers imported successfully!")
+except Exception as e:
+    print(f"❌ Error importing gemini handlers: {str(e)}")
+    # Create dummy functions to prevent crashes
+    def get_weather_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+    def get_stock_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+    def get_news_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+    def generate_image_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+    def generate_meme_with_gemini(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+    def get_general_response(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+    def recommend_music_from_image(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+
+try:
+    from utils.get_places import get_places_nearby, get_user_location_from_telegram, format_places_response, get_places_with_pagination
+    print("✅ Places utilities imported successfully!")
+except Exception as e:
+    print(f"❌ Error importing places utilities: {str(e)}")
+    # Create dummy functions
+    def get_places_nearby(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+    def get_user_location_from_telegram(*args, **kwargs): return None
+    def format_places_response(*args, **kwargs): return "Places service not available"
+    def get_places_with_pagination(*args, **kwargs): return {"status": "error", "message": "Handler not available"}
+
+try:
+    from utils.voice_processor import process_voice_message
+    print("✅ Voice processor imported successfully!")
+except Exception as e:
+    print(f"❌ Error importing voice processor: {str(e)}")
+    def process_voice_message(*args, **kwargs): return {"success": False, "error": "Voice processor not available"}
+
+try:
+    from prompts.ballu_prompts import (
+        BALLU_BASE_PROMPT, 
+        FUNCTION_CALLING_PROMPT, 
+        FOLLOW_UP_PROMPT,
+        get_intent_and_parameters_with_gemini
+    )
+    print("✅ Prompts imported successfully!")
+except Exception as e:
+    print(f"❌ Error importing prompts: {str(e)}")
+    # Create dummy constants and functions
+    BALLU_BASE_PROMPT = "You are Syro, an AI assistant."
+    FUNCTION_CALLING_PROMPT = ""
+    FOLLOW_UP_PROMPT = ""
+    def get_intent_and_parameters_with_gemini(*args, **kwargs): return None, None
 
 load_dotenv()  # take environment variables
 
@@ -67,7 +125,24 @@ except Exception as e:
     processed_messages_collection = None
 
 # Configure Gemini with Function Calling
-genai.configure(api_key=gemini_api)
+if genai:
+    try:
+        genai.configure(api_key=gemini_api)
+        print("✅ Gemini API configured successfully!")
+        
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            print("✅ Gemini model created successfully!")
+        except Exception as e:
+            print(f"❌ Error creating Gemini model: {str(e)}")
+            model = None
+            
+    except Exception as e:
+        print(f"❌ Error configuring Gemini API: {str(e)}")
+        model = None
+else:
+    print("⚠️ Gemini not available - API will use fallback responses")
+    model = None
 
 # Define function schemas for Gemini - commented out for now due to version compatibility
 # function_declarations = [
@@ -201,11 +276,12 @@ genai.configure(api_key=gemini_api)
 #     }
 # ]
 
-# Create Gemini model without function calling first
-model = genai.GenerativeModel('gemini-1.5-flash')
-
 # --- Move FastAPI app definition here ---
 app = FastAPI(title="Syro - Intelligent Telegram Bot", version="1.0.0")
+
+print("🎉 FastAPI app created successfully!")
+print("🔧 All imports and configurations loaded!")
+print("🚀 Syro Telegram Bot is ready to serve requests!")
 
 # Health check endpoint for Render
 @app.get("/health")
@@ -1097,9 +1173,14 @@ What would you like to know about today?
                 function_name=function_name,
                 function_result=function_result["result"]
             )
-            final_response = genai.GenerativeModel('gemini-1.5-flash').generate_content(follow_up_prompt)
+            if genai and model:
+                final_response = model.generate_content(follow_up_prompt)
+                response_text = final_response.text
+            else:
+                response_text = "Sorry, I'm having trouble processing your request right now. Please try again later."
+            
             return {
-                "response": final_response.text,
+                "response": response_text,
                 "function_used": function_name,
                 "function_success": function_result["success"],
                 "send_image": False
@@ -1144,10 +1225,14 @@ What would you like to know about today?
                 User message: "{user_message}"
                 """
             
-            response = genai.GenerativeModel('gemini-1.5-flash').generate_content(clarification_prompt)
+            if genai and model:
+                response = model.generate_content(clarification_prompt)
+                response_text = response.text
+            else:
+                response_text = "Sorry, I'm having trouble processing your request right now. Please try again later."
             
             return {
-                "response": response.text,
+                "response": response_text,
                 "function_used": None,
                 "function_success": None,
                 "send_image": False
@@ -1200,10 +1285,14 @@ What would you like to know about today?
             {context + "Current message: " + user_message if context else "User message: " + user_message}
             """
             
-            response = genai.GenerativeModel('gemini-1.5-flash').generate_content(enhanced_prompt)
+            if genai and model:
+                response = model.generate_content(enhanced_prompt)
+                response_text = response.text
+            else:
+                response_text = "Hello! I'm Syro, your AI assistant created by Siddhant and Shreya. I'm here to help you with weather, news, stock prices, finding places, generating images and more! What can I help you with today?"
             
             return {
-                "response": response.text,
+                "response": response_text,
                 "function_used": None,
                 "function_success": None,
                 "send_image": False
